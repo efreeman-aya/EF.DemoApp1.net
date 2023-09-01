@@ -9,6 +9,8 @@ namespace Infrastructure.Data.Migrations;
 /// <inheritdoc />
 public partial class InitialCreate : Migration
 {
+    private const string AKV_KEY = "https://ef-kv-dev-1.vault.azure.net/keys/sql-cmk-1/4c902abcbcda48b2aee580e0b5c55f2b";
+
     /// <inheritdoc />
     protected override void Up(MigrationBuilder migrationBuilder)
     {
@@ -74,7 +76,7 @@ public partial class InitialCreate : Migration
             unique: true)
             .Annotation("SqlServer:Clustered", true);
 
-        string url_AKV_CMK = "<path to KeyVault key>";
+        string url_AKV_CMK = AKV_KEY;
         string schema_table = "[todo].[TodoItem]";
         string cmkName = "CMK_WITH_AKV";
 
