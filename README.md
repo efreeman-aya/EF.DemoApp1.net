@@ -1,12 +1,10 @@
 # Introduction 
 C# Sample App - A modern domain-centric service api template
-- main branch - .net7 latest release
-- net8 branch - .net8 latest preview release
+- main branch - .net8 latest release
 
 # Prerequisites
-1. [Visual Studio 2022 Latest (>=17.8 preview needed for .net8)](https://visualstudio.microsoft.com/vs/)
-2. [.net7 sdk](https://dotnet.microsoft.com/en-us/download/dotnet/7.0) (main branch)
-3. [.net8 sdk](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) (net8 branch, will merge to main when released)
+1. [Visual Studio 2022 Latest](https://visualstudio.microsoft.com/vs/)
+2. [.net8 sdk](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) 
 
 # Getting Started
 Clone, set the startup project to SampleApp/SampleApp.Api, and run - swagger page opens, using the same port and root path shows a basic js UI
@@ -21,8 +19,8 @@ Clone, set the startup project to SampleApp/SampleApp.Api, and run - swagger pag
 	* Test.Load - load testing using [NBomber](https://nbomber.com/)
 	* Test.Benchmarks - benchmark testing using [BenchmarkDotNet](https://benchmarkdotnet.org/)
 	* Test.Console - console app tester for manually hitting enpoints
-* Some are ignored by default because they require further setup/integration
-	* Test.UI, Test.SpecFlow.Specs (UI feature) tests require the appropriate versions of Chrome and Edge. 
+* Some tests are ignored by default because they require further setup/integration
+	* Test.UI, Test.SpecFlow.Specs (UI feature) tests use Selenium which requires the appropriate versions of Chrome and Edge. 
 	* Test.Load, Test.UI, Test.SpecFlow.Specs (UI feature) require the app to be running in order to run the Load & Selenium UI tests. Load and run the solution in one VS, load into another VS to run the UI dependent tests.
 	* AzureBlobStorageTests needs either Azurite (https://www.npmjs.com/package/azurite) or an Azure storage account
 	* CosmosDbTests needs either the CosmosDb emulator (https://learn.microsoft.com/en-us/azure/cosmos-db/local-emulator?tabs=ssl-netstd21) or an Azure CosmosDb Account
