@@ -4,6 +4,7 @@ using Infrastructure.Data;
 using Microsoft.ApplicationInsights.DependencyCollector;
 using Package.Infrastructure.AspNetCore.Swagger;
 using Package.Infrastructure.Grpc;
+using Sample.Api.ExceptionHandlers;
 using SampleApp.Bootstrapper.HealthChecks;
 using Swashbuckle.AspNetCore.SwaggerGen;
 
@@ -31,6 +32,9 @@ internal static class IServiceCollectionExtensions
             module.EnableSqlCommandTextInstrumentation = config.GetValue<bool>("EnableSqlCommandTextInstrumentation", false);
         });
 
+        //exception handling
+        services.AddExceptionHandler<DefaultExceptionHandler>();
+
         //api versioning
         var apiVersioningBulder = services.AddApiVersioning(options =>
         {
@@ -42,6 +46,9 @@ internal static class IServiceCollectionExtensions
 
         //header propagation
         services.AddHeaderPropagation(); // (options => options.Headers.Add("x-username-etc"));
+
+        //convenient for model validation
+        services.AddProblemDetails();
 
         //https://github.com/stevejgordon/CorrelationId/wiki
         services.AddDefaultCorrelationId(options =>

@@ -34,6 +34,7 @@ CREATE TABLE [todo].[TodoItem] (
     [Status] int NOT NULL,
     [SecureRandom] nvarchar(100) NULL,
     [SecureDeterministic] nvarchar(100) NULL,
+    [IsDeleted] bit NOT NULL,
     [CreatedDate] datetime2(0) NOT NULL,
     [CreatedBy] nvarchar(100) NOT NULL,
     [UpdatedDate] datetime2(0) NOT NULL,

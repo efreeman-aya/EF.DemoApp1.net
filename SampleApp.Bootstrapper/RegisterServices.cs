@@ -71,7 +71,7 @@ public static class IServiceCollectionExtensions
         //LazyCache.AspNetCore, lightweight wrapper around memorycache; prevent race conditions when multiple threads attempt to refresh empty cache item
         services.AddLazyCache();
 
-        //https://docs.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-6.0
+        //https://docs.microsoft.com/en-us/aspnet/core/performance/caching/distributed
         string? connectionString = config.GetConnectionString("Redis");
         if (!string.IsNullOrEmpty(connectionString))
         {
@@ -148,6 +148,8 @@ public static class IServiceCollectionExtensions
         }
         else
         {
+            //consider a pooled factory - https://learn.microsoft.com/en-us/ef/core/performance/advanced-performance-topics?tabs=with-di%2Cexpression-api-with-constant#dbcontext-pooling
+
             services.AddDbContextPool<TodoDbContextTrxn>(options =>
                 options.UseSqlServer(connectionString,
                     //retry strategy does not support user initiated transactions 
@@ -167,6 +169,12 @@ public static class IServiceCollectionExtensions
                     sqlServerOptionsAction: sqlOptions =>
                     {
                         sqlOptions.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null);
+                        //use relational null semantics 3-valued logic (true, false, null) instead of c# which may generate less efficient sql, but LINQ queries will have a different meaning
+                        //https://learn.microsoft.com/en-us/ef/core/querying/null-comparisons
+                        //sqlOptions.UseRelationalNulls(true);
+                        //default to split queries to avoid cartesian explosion when joining (multiple includes at the same level)
+                        //https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries
+                        //sqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
                     })
                 );
 
@@ -234,9 +242,8 @@ public static class IServiceCollectionExtensions
             var httpClientBuilder = services.AddHttpClient<ISampleApiRestClient, SampleApiRestClient>(options =>
             {
                 options.BaseAddress = new Uri(config.GetValue<string>("SampleApiRestClientSettings:BaseUrl")!); //HttpClient will get injected
-            })
-            .AddPolicyHandler(PollyRetry.GetHttpRetryPolicy())
-            .AddPolicyHandler(PollyRetry.GetHttpCircuitBreakerPolicy());
+            });
+
             //TODO - move this to register Api services
             //integration testing breaks since there is no existing http request, so no headers to propagate
             //'app.UseHeaderPropagation()' required. Header propagation can only be used within the context of an HTTP request, not a test.
@@ -252,6 +259,12 @@ public static class IServiceCollectionExtensions
             {
                 httpClientBuilder.AddHttpMessageHandler<SampleRestApiAuthMessageHandler>();
             }
+
+            //resiliency
+            //.AddPolicyHandler(PollyRetry.GetHttpRetryPolicy())
+            //.AddPolicyHandler(PollyRetry.GetHttpCircuitBreakerPolicy());
+            //Microsoft.Extensions.Http.Resilience - https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience?tabs=dotnet-cli
+            httpClientBuilder.AddStandardResilienceHandler();
         }
 
         //OpenAI chat service
@@ -268,14 +281,18 @@ public static class IServiceCollectionExtensions
         {
             services.Configure<WeatherServiceSettings>(configSection);
             services.AddScoped<IWeatherService, WeatherService>();
+
             services.AddHttpClient<IWeatherService, WeatherService>(client =>
             {
                 client.BaseAddress = new Uri(config.GetValue<string>("WeatherServiceSettings:BaseUrl")!);
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Key", config.GetValue<string>("WeatherServiceSettings:Key")!);
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", config.GetValue<string>("WeatherServiceSettings:Host")!);
             })
-            .AddPolicyHandler(PollyRetry.GetHttpRetryPolicy())
-            .AddPolicyHandler(PollyRetry.GetHttpCircuitBreakerPolicy());
+            //resiliency
+            //.AddPolicyHandler(PollyRetry.GetHttpRetryPolicy())
+            //.AddPolicyHandler(PollyRetry.GetHttpCircuitBreakerPolicy());
+            //Microsoft.Extensions.Http.Resilience - https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience?tabs=dotnet-cli
+            .AddStandardResilienceHandler();
         }
 
         //StartupTasks - executes once at startup

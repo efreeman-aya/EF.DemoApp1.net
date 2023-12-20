@@ -8,7 +8,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Package.Infrastructure.BackgroundServices;
-using Package.Infrastructure.Common;
 using Package.Infrastructure.OpenAI.ChatApi;
 using Package.Infrastructure.Test.Integration.Blob;
 using Package.Infrastructure.Test.Integration.Cosmos;
@@ -158,8 +157,11 @@ public abstract class IntegrationTestBase
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Key", Config.GetValue<string>("WeatherServiceSettings:Key")!);
                 client.DefaultRequestHeaders.Add("X-RapidAPI-Host", Config.GetValue<string>("WeatherServiceSettings:Host")!);
             })
-            .AddPolicyHandler(PollyRetry.GetHttpRetryPolicy())
-            .AddPolicyHandler(PollyRetry.GetHttpCircuitBreakerPolicy());
+            //resiliency
+            //.AddPolicyHandler(PollyRetry.GetHttpRetryPolicy())
+            //.AddPolicyHandler(PollyRetry.GetHttpCircuitBreakerPolicy());
+            //Microsoft.Extensions.Http.Resilience - https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience?tabs=dotnet-cli
+            .AddStandardResilienceHandler();
         }
 
         //OpenAI chat service
