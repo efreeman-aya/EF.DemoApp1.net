@@ -42,8 +42,9 @@ services.AddTransient(provider =>
         Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", config.GetValue<string>("SampleApiRestClientSettings:ClientId"));
         Environment.SetEnvironmentVariable("AZURE_CLIENT_SECRET", config.GetValue<string>("SampleApiRestClientSettings:ClientSecret"));
     }
-    var scopes = config.GetSection("SampleApiRestClientSettings:Scopes").Get<string[]>();
+    var scopes = config.GetSection("SampleApiRestClientSettings:Scopes").Get<string[]>(); ///.default
     return new SampleRestApiAuthMessageHandler(scopes!);
+    
 });
 services.AddHttpClient<ISampleApiRestClient, SampleApiRestClient>(options =>
 {

@@ -27,7 +27,20 @@ public abstract class BaseDefaultAzureCredsAuthMessageHandler : DelegatingHandle
         //TokenRequestContext supports other options
         //This parameter is a list of scopes; if your target App Service/Function has defined scopes then use them here.
         TokenRequestContext = new(scopes);
-        Credentials = new DefaultAzureCredential();
+
+        //var objDefaultAzureCredentialOptions = new DefaultAzureCredentialOptions
+        //{
+        //    ExcludeEnvironmentCredential = true,
+        //    ExcludeManagedIdentityCredential = true,
+        //    ExcludeSharedTokenCacheCredential = true,
+        //    ExcludeVisualStudioCredential = false,
+        //    ExcludeVisualStudioCodeCredential = true,
+        //    ExcludeAzureCliCredential = true,
+        //    ExcludeInteractiveBrowserCredential = true
+        //};
+
+
+        Credentials = new DefaultAzureCredential(true);
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
