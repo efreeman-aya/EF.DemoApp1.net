@@ -37,8 +37,8 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Respawn" Version="6.2.1" />
-    <PackageReference Include="Testcontainers" Version="3.7.0" />
-    <PackageReference Include="Testcontainers.MsSql" Version="3.7.0" />
+    <PackageReference Include="Testcontainers" Version="3.8.0" />
+    <PackageReference Include="Testcontainers.MsSql" Version="3.8.0" />
   </ItemGroup>
 
   <ItemGroup>
