@@ -1,5 +1,6 @@
 ﻿//logging for initialization
 using Application.Contracts.Interfaces;
+using Domain.Shared.Enums;
 using Google.Protobuf.WellKnownTypes;
 using Infrastructure.SampleApi;
 using Microsoft.Extensions.Configuration;
@@ -8,7 +9,6 @@ using Microsoft.Extensions.Logging;
 using Package.Infrastructure.Auth.Tokens;
 using Package.Infrastructure.Common.Extensions;
 using Package.Infrastructure.Grpc;
-using Test.Console;
 using SampleAppGrpc = SampleApp.Grpc.Proto;
 using SampleAppModel = Application.Contracts.Model;
 
@@ -20,8 +20,7 @@ using var loggerFactory = LoggerFactory.Create(builder =>
     builder.AddApplicationInsights();
 });
 var logger = loggerFactory.CreateLogger<Program>()!;
-
-var config = Utility.Config;
+var config = Test.Support.Utility.BuildConfiguration().AddUserSecrets<Program>().Build();
 
 //DI
 IServiceCollection services = new ServiceCollection();
@@ -135,7 +134,8 @@ while (true)
             if (command.Contains("r-"))
             {
                 //REST
-                await AttemptRestAsync(() => restClient.SaveItemAsync(new SampleAppModel.TodoItemDto { Id = id, Name = input2 ?? Guid.NewGuid().ToString() }));
+                //await AttemptRestAsync(() => restClient.SaveItemAsync(new SampleAppModel.TodoItemDto { Id = id, Name = input2 ?? Guid.NewGuid().ToString() }));
+                await AttemptRestAsync(() => restClient.SaveItemAsync(new SampleAppModel.TodoItemDto(id, input2 ?? Guid.NewGuid().ToString(), TodoItemStatus.Created)));
             }
             else
             {

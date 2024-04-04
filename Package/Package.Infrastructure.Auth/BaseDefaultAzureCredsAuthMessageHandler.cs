@@ -17,37 +17,21 @@ namespace Package.Infrastructure.Auth;
   .AddHttpMessageHandler<InheritFromBaseDefaultCredsAuthMessageHandler>();  
  */
 
-public abstract class BaseDefaultAzureCredsAuthMessageHandler : DelegatingHandler
+/// <summary>
+/// In the http client SendAsync pipeline, this handler will get a token from the DefaultAzureCredential and add it to the request header
+/// then call the next handler in the pipeline - base.SendAsync
+/// </summary>
+/// <param name="scopes"></param>
+public abstract class BaseDefaultAzureCredsAuthMessageHandler(string[] scopes) : DelegatingHandler
 {
-    private readonly TokenRequestContext TokenRequestContext;
-    private readonly DefaultAzureCredential Credentials;
-
-    protected BaseDefaultAzureCredsAuthMessageHandler(string[] scopes)
-    {
-        //TokenRequestContext supports other options
-        //This parameter is a list of scopes; if your target App Service/Function has defined scopes then use them here.
-        TokenRequestContext = new(scopes);
-
-        //var objDefaultAzureCredentialOptions = new DefaultAzureCredentialOptions
-        //{
-        //    ExcludeEnvironmentCredential = true,
-        //    ExcludeManagedIdentityCredential = true,
-        //    ExcludeSharedTokenCacheCredential = true,
-        //    ExcludeVisualStudioCredential = false,
-        //    ExcludeVisualStudioCodeCredential = true,
-        //    ExcludeAzureCliCredential = true,
-        //    ExcludeInteractiveBrowserCredential = true
-        //};
-
-
-        Credentials = new DefaultAzureCredential(true);
-    }
+    private readonly TokenRequestContext TokenRequestContext = new(scopes);
+    private readonly DefaultAzureCredential Credentials = new();
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         //DefaultAzureCredential caches internally and knows when to refresh
-        var tokenResult = await Credentials.GetTokenAsync(TokenRequestContext, cancellationToken);
-        var authorizationHeader = new AuthenticationHeaderValue("Bearer", tokenResult.Token);
+        var accessToken = await Credentials.GetTokenAsync(TokenRequestContext, cancellationToken);
+        var authorizationHeader = new AuthenticationHeaderValue("Bearer", accessToken.Token);
         request.Headers.Authorization = authorizationHeader;
         return await base.SendAsync(request, cancellationToken);
     }

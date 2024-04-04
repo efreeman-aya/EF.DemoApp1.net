@@ -1,8 +1,95 @@
 ﻿using Domain.Model;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
+using Package.Infrastructure.Common.Extensions;
 
 namespace Test.Support;
 public static class DbSupport
 {
+    public static T ConfigureServicesTestDB<T>(ILogger logger, IServiceCollection services, string? dbConnectionString)
+        where T : DbContext
+    {
+        //if _dbConnectionString is null, use the api defined DbContext/DB, otherwise switch out the DB here
+        if (!string.IsNullOrEmpty(dbConnectionString))
+        {
+            logger.InfoLog($"Swapping services DbContext to use test database source: {dbConnectionString}");
+
+            services.RemoveAll(typeof(DbContextOptions<T>));
+            services.RemoveAll(typeof(T));
+            services.AddDbContext<T>(options =>
+            {
+                if (dbConnectionString == "UseInMemoryDatabase")
+                {
+                    options.UseInMemoryDatabase($"Test.Endpoints-{Guid.NewGuid()}");
+                }
+                else
+                {
+                    options.UseSqlServer(dbConnectionString,
+                        //retry strategy does not support user initiated transactions 
+                        sqlServerOptionsAction: sqlOptions =>
+                        {
+                            sqlOptions.EnableRetryOnFailure(maxRetryCount: 5,
+                            maxRetryDelay: TimeSpan.FromSeconds(30),
+                            errorNumbersToAdd: null);
+                        });
+                }
+            }, ServiceLifetime.Singleton);
+        }
+
+        var sp = services.BuildServiceProvider();
+        using var scope = sp.CreateScope();
+        var scopedServices = scope.ServiceProvider;
+        var db = scopedServices.GetRequiredService<T>();
+
+        //Environment.SetEnvironmentVariable("AKVCMKURL", "");
+        //db.Database.Migrate(); //needs AKVCMKURL env var set
+        db.Database.EnsureCreated(); //does not use migrations; uses DbContext to create tables
+
+        return db;
+    }
+
+    /// <summary>
+    /// Currently works only with existing database; not TestContainer or InMemoryDatabase
+    /// </summary>
+    /// <param name="snapshotName"></param>
+    /// <param name="dbName"></param>
+    /// <param name="dbConnectionString"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    public static async Task CreateDbSnapshot(string snapshotName, string dbName, string dbConnectionString, CancellationToken cancellationToken = default)
+    {
+        var snapshotPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DBSnapshot");
+        var snapshotUtility = new SqlDatabaseSnapshotUtility(dbConnectionString);
+
+        // Try to delete the snapshot in case it was left over from aborted test runs
+        try { await snapshotUtility.DeleteSnapshotAsync(snapshotName, cancellationToken); }
+        catch { /* expect fail when snapshot does not exist */ }
+
+        await snapshotUtility.CreateSnapshotAsync(dbName, snapshotPath, snapshotName, cancellationToken);
+    }
+
+    /// <summary>
+    /// Currently works only with existing database; not TestContainer or InMemoryDatabase
+    /// </summary>
+    /// <param name="snapshotName"></param>
+    /// <param name="dbConnectionString"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    public static async Task DeleteDbSnapshot(string snapshotName, string dbConnectionString, CancellationToken cancellationToken = default)
+    {
+        var snapshotUtility = new SqlDatabaseSnapshotUtility(dbConnectionString);
+        await snapshotUtility.DeleteSnapshotAsync(snapshotName, cancellationToken);
+    }
+
+    private static readonly Random _R = new();
+    public static TEnum? RandomEnumValue<TEnum>()
+    {
+        var v = Enum.GetValues(typeof(TEnum));
+        return (TEnum?)v.GetValue(_R.Next(v.Length));
+    }
+
     /// <summary>
     /// InMemory provider does not understand RowVersion like Sql EF Provider
     /// </summary>

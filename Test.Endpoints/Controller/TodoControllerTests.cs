@@ -1,59 +1,48 @@
-﻿using AngleSharp.Html.Dom;
-using Application.Contracts.Model;
+﻿using Application.Contracts.Model;
+using Domain.Model;
+using Domain.Shared.Enums;
+using Microsoft.Extensions.Configuration;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Package.Infrastructure.Common.Extensions;
 using System.Net;
+using Test.Support;
+
+//parallel to the same api can cause intermittent failures since the api & all tests are using the same database;
+//all will try to create the DB if it doesn't exist
+//[assembly: DoNotParallelize]
 
 namespace Test.Endpoints.Controller;
 
 [TestClass]
 public class TodoControllerTests : EndpointTestBase
 {
-    private static HttpClient _client = null!;
-
-    [ClassInitialize]
-    public static async Task ClassInit(TestContext testContext)
-    {
-        Console.WriteLine(testContext.TestName);
-
-        //Arrange for all tests
-        _client = Utility.GetClient<Program>();
-
-        //Authentication
-        //await ApplyBearerAuthHeader(_client);
-        await Task.CompletedTask; //compiler warning
-    }
-
-    //html endpoints return success and correct content type
-    [DataTestMethod]
-    [DataRow("swagger", HttpStatusCode.OK, "text/html; charset=utf-8")]
-    [DataRow("index.html", HttpStatusCode.OK, "text/html")]
-    public async Task Get_BasicEndpoints_pass(string url, HttpStatusCode expectedStatusCode, string contentType)
-    {
-        // Act
-        (HttpResponseMessage httpResponse, _) = await _client.HttpRequestAndResponseAsync<IHtmlDocument>(HttpMethod.Get, url, null);
-
-        // Assert
-        httpResponse.EnsureSuccessStatusCode(); // Status Code 200-299
-        Assert.AreEqual(expectedStatusCode, httpResponse.StatusCode);
-        Assert.AreEqual(contentType, httpResponse.Content.Headers.ContentType?.ToString());
-    }
+    private static readonly string? DBSnapshotName = TestConfigSection.GetValue<string?>("DBSnapshotName", null);
 
     [TestMethod]
+    [DoNotParallelize]
     public async Task CRUD_pass()
     {
-        //arrange
+        //arrange - configure any test data for this test (optional, after snapshot)
+        bool respawn = string.IsNullOrEmpty(DBSnapshotName);
+        List<Action> seedFactories = [() => DbContext.SeedEntityData()];
+        //generate another 5 completed items
+        seedFactories.Add(() => DbContext.SeedEntityData(size: 5, status: TodoItemStatus.Completed));
+        //add a single item
+        seedFactories.Add(() => DbContext.Add(new TodoItem("a123456") { CreatedBy = "Test.Unit", CreatedDate = DateTime.UtcNow }));
+        //grab the seed paths for this test (can't duplicate snapshot)
+        List<string>? seedPaths = respawn ? [TestConfigSection.GetValue<string>("SeedFilePath")] : null;
+        //reset the DB with the seed scripts & data
+        //existing sql db can reset db using snapshot created in ClassInitialize
+        await ResetDatabaseAsync(respawn, DBSnapshotName, seedPaths, seedFactories);
+
         string urlBase = "api/v1/todoitems";
         string name = $"Todo-a-{Guid.NewGuid()}";
-        var todo = new TodoItemDto
-        {
-            Name = name
-        };
+        var todo = new TodoItemDto(null, name, TodoItemStatus.Created);
 
         //act
 
         //POST create (insert)
-        (var _, var parsedResponse) = await _client.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Post, urlBase, todo);
+        (var _, var parsedResponse) = await ApiHttpClient.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Post, urlBase, todo);
         todo = parsedResponse;
         Assert.IsNotNull(todo);
 
@@ -61,25 +50,52 @@ public class TodoControllerTests : EndpointTestBase
         Assert.IsTrue(id != Guid.Empty);
 
         //GET retrieve
-        (_, parsedResponse) = await _client.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Get, $"{urlBase}/{id}", null);
+        (_, parsedResponse) = await ApiHttpClient.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Get, $"{urlBase}/{id}", null);
         Assert.AreEqual(id, parsedResponse?.Id);
 
         //PUT update
-        todo.Name = $"Update {name}";
-        (_, parsedResponse) = await _client.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Put, $"{urlBase}/{id}", todo);
-        Assert.AreEqual(todo.Name, parsedResponse?.Name);
+        var todo2 = todo with { Name = $"Update {name}" };
+        (_, parsedResponse) = await ApiHttpClient.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Put, $"{urlBase}/{id}", todo2);
+        Assert.AreEqual(todo2.Name, parsedResponse?.Name);
 
         //GET retrieve
-        (_, parsedResponse) = await _client.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Get, $"{urlBase}/{id}", null);
-        Assert.AreEqual(todo.Name, parsedResponse?.Name);
+        (_, parsedResponse) = await ApiHttpClient.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Get, $"{urlBase}/{id}", null);
+        Assert.AreEqual(todo2.Name, parsedResponse?.Name);
 
         //DELETE
-        (var httpResponse, _) = await _client.HttpRequestAndResponseAsync<object>(HttpMethod.Delete, $"{urlBase}/{id}", null);
+        (var httpResponse, _) = await ApiHttpClient.HttpRequestAndResponseAsync<object>(HttpMethod.Delete, $"{urlBase}/{id}", null);
         Assert.AreEqual(HttpStatusCode.OK, httpResponse.StatusCode);
 
         //GET (NotFound) - ensure deleted
-        (httpResponse, _) = await _client.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Get, $"{urlBase}/{id}", null, null, false);
+        (httpResponse, _) = await ApiHttpClient.HttpRequestAndResponseAsync<TodoItemDto>(HttpMethod.Get, $"{urlBase}/{id}", null, null, false, false);
         Assert.AreEqual(HttpStatusCode.NotFound, httpResponse.StatusCode);
+    }
 
+    [ClassInitialize]
+    public static async Task ClassInit(TestContext testContext)
+    {
+        Console.Write($"Start {testContext.TestName}");
+        await ConfigureTestInstanceAsync(testContext.TestName!);
+
+        //existing sql db can reset db using snapshot created in ClassInitialize
+        if (TestConfigSection.GetValue<bool>("DBSnapshotCreate") && !string.IsNullOrEmpty(DBSnapshotName))
+        {
+            List<Action> seedFactories = [() => DbContext.SeedEntityData()];
+            seedFactories.Add(() => DbContext.SeedEntityData(size: 5, status: TodoItemStatus.Completed));
+            seedFactories.Add(() => DbContext.Add(new TodoItem("a12345") { CreatedBy = "Test.Unit", CreatedDate = DateTime.UtcNow }));
+            List<string>? seedPaths = [TestConfigSection.GetValue<string>("SeedFilePath")];
+            await ResetDatabaseAsync(true, seedPaths: seedPaths, seedFactories: seedFactories);
+            await CreateDbSnapshot(DBSnapshotName);
+        }
+    }
+
+    [ClassCleanup]
+    public static async Task ClassCleanup()
+    {
+        //existing sql db can reset db using snapshot created in ClassInitialize
+        if (TestConfigSection.GetValue<bool>("DBSnapshotCreate") && !string.IsNullOrEmpty(DBSnapshotName))
+            await DeleteDbSnapshot(DBSnapshotName);
+
+        await BaseClassCleanup();
     }
 }

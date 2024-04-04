@@ -31,11 +31,12 @@ public abstract class ServiceBusSenderBase : IServiceBusSender
     /// <param name="metadata"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    public async Task SendMessageAsync(string queueOrTopicName, string message, IDictionary<string, object>? metadata = null, CancellationToken cancellationToken = default)
+    public async Task SendMessageAsync(string queueOrTopicName, string message, string? correlationId = null, IDictionary<string, object>? metadata = null, CancellationToken cancellationToken = default)
     {
         ServiceBusSender sender = GetServiceBusSenderAsync(queueOrTopicName);
 
         ServiceBusMessage sbMessage = new(message);
+        if (correlationId != null) sbMessage.CorrelationId = correlationId;
         if (metadata != null)
         {
             foreach (var item in metadata)
@@ -44,7 +45,7 @@ public abstract class ServiceBusSenderBase : IServiceBusSender
             }
         }
         _logger.LogDebug("SendMessageAsync Start - {Message}", _settings.LogMessageData ? sbMessage.Body : "LogMessageData = false");
-        await sender.SendMessageAsync(sbMessage, cancellationToken);
+        await sender.SendMessageAsync(sbMessage, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
         _logger.LogDebug("SendMessageAsync Finish - {Message}", _settings.LogMessageData ? sbMessage.Body : "LogMessageData = false");
     }
 
@@ -57,7 +58,7 @@ public abstract class ServiceBusSenderBase : IServiceBusSender
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
     /// <exception cref="InvalidOperationException"></exception>
-    public async Task SendBatchAsync<T>(string queueOrTopicName, ICollection<T> batch, CancellationToken cancellationToken = default)
+    public async Task SendBatchAsync<T>(string queueOrTopicName, ICollection<T> batch, string? correlationId = null, CancellationToken cancellationToken = default)
     {
         //assemble batch into a local queue
         Queue<ServiceBusMessage> q = new();
@@ -67,6 +68,7 @@ public abstract class ServiceBusSenderBase : IServiceBusSender
             sbm = new ServiceBusMessage(JsonSerializer.Serialize(m));
             sbm.ApplicationProperties.Add("MessageType", typeof(T).Name);
             sbm.ApplicationProperties.Add("MessageTypeFull", typeof(T).FullName);
+            if (correlationId != null) sbm.CorrelationId = correlationId;
             q.Enqueue(sbm);
         });
 
@@ -77,7 +79,7 @@ public abstract class ServiceBusSenderBase : IServiceBusSender
         while (q.Count > 0)
         {
             // start a new batch 
-            using ServiceBusMessageBatch messageBatch = await sender.CreateMessageBatchAsync(cancellationToken);
+            using ServiceBusMessageBatch messageBatch = await sender.CreateMessageBatchAsync(cancellationToken).ConfigureAwait(false);
 
             // add the first message to the batch
             if (messageBatch.TryAddMessage(q.Peek()))
@@ -100,7 +102,7 @@ public abstract class ServiceBusSenderBase : IServiceBusSender
 
             //send the batch
             _logger.LogDebug("SendBatchAsync Start - batch count {BatchCount}; remaining message count {RemainingMessageCount}", messageBatch.Count, q.Count);
-            await sender.SendMessagesAsync(messageBatch, cancellationToken);
+            await sender.SendMessagesAsync(messageBatch, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
             _logger.LogDebug("SendBatchAsync Finish - batch count {BatchCount}; remaining message count {RemainingMessageCount}", messageBatch.Count, q.Count);
             // if there are any remaining messages in the .NET queue, the while loop repeats 
         }

@@ -11,43 +11,73 @@ GO
 BEGIN TRANSACTION;
 GO
 
-IF SCHEMA_ID(N'todo') IS NULL EXEC(N'CREATE SCHEMA [todo];');
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240328232558_InitialCreate'
+)
+BEGIN
+    IF SCHEMA_ID(N'todo') IS NULL EXEC(N'CREATE SCHEMA [todo];');
+END;
 GO
 
-CREATE TABLE [todo].[SystemSetting] (
-    [Id] uniqueidentifier NOT NULL,
-    [Key] nvarchar(100) NOT NULL,
-    [Value] nvarchar(200) NULL,
-    [Flags] int NOT NULL,
-    [CreatedDate] datetime2(0) NOT NULL,
-    [CreatedBy] nvarchar(100) NOT NULL,
-    [UpdatedDate] datetime2(0) NOT NULL,
-    [UpdatedBy] nvarchar(100) NULL,
-    [RowVersion] rowversion NULL,
-    CONSTRAINT [PK_SystemSetting] PRIMARY KEY NONCLUSTERED ([Id])
-);
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240328232558_InitialCreate'
+)
+BEGIN
+    CREATE TABLE [todo].[SystemSetting] (
+        [Id] uniqueidentifier NOT NULL,
+        [Key] nvarchar(100) NOT NULL,
+        [Value] nvarchar(200) NULL,
+        [Flags] int NOT NULL,
+        [RowVersion] rowversion NULL,
+        [CreatedDate] datetime2(0) NOT NULL,
+        [CreatedBy] nvarchar(100) NOT NULL,
+        [UpdatedDate] datetime2(0) NULL,
+        [UpdatedBy] nvarchar(100) NULL,
+        CONSTRAINT [PK_SystemSetting] PRIMARY KEY NONCLUSTERED ([Id])
+    );
+END;
 GO
 
-CREATE TABLE [todo].[TodoItem] (
-    [Id] uniqueidentifier NOT NULL,
-    [Name] nvarchar(100) NOT NULL,
-    [Status] int NOT NULL,
-    [SecureRandom] nvarchar(100) NULL,
-    [SecureDeterministic] nvarchar(100) NULL,
-    [IsDeleted] bit NOT NULL,
-    [CreatedDate] datetime2(0) NOT NULL,
-    [CreatedBy] nvarchar(100) NOT NULL,
-    [UpdatedDate] datetime2(0) NOT NULL,
-    [UpdatedBy] nvarchar(100) NULL,
-    [RowVersion] rowversion NULL,
-    CONSTRAINT [PK_TodoItem] PRIMARY KEY NONCLUSTERED ([Id])
-);
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240328232558_InitialCreate'
+)
+BEGIN
+    CREATE TABLE [todo].[TodoItem] (
+        [Id] uniqueidentifier NOT NULL,
+        [Name] nvarchar(100) NOT NULL,
+        [Status] int NOT NULL,
+        [SecureRandom] varbinary(100) NULL,
+        [SecureDeterministic] varbinary(100) NULL,
+        [IsDeleted] bit NOT NULL,
+        [RowVersion] rowversion NULL,
+        [CreatedDate] datetime2(0) NOT NULL,
+        [CreatedBy] nvarchar(100) NOT NULL,
+        [UpdatedDate] datetime2(0) NULL,
+        [UpdatedBy] nvarchar(100) NULL,
+        CONSTRAINT [PK_TodoItem] PRIMARY KEY NONCLUSTERED ([Id])
+    );
+END;
 GO
 
-CREATE UNIQUE CLUSTERED INDEX [IX_SystemSetting_Key] ON [todo].[SystemSetting] ([Key]);
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240328232558_InitialCreate'
+)
+BEGIN
+    CREATE UNIQUE CLUSTERED INDEX [IX_SystemSetting_Key] ON [todo].[SystemSetting] ([Key]);
+END;
 GO
 
-CREATE UNIQUE CLUSTERED INDEX [IX_TodoItem_Name] ON [todo].[TodoItem] ([Name]);
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240328232558_InitialCreate'
+)
+BEGIN
+    CREATE UNIQUE CLUSTERED INDEX [IX_TodoItem_Name] ON [todo].[TodoItem] ([Name]);
+END;
 GO
 
 IF NOT EXISTS (SELECT * FROM sys.column_master_keys WHERE name = 'CMK_WITH_AKV')
@@ -80,20 +110,32 @@ BEGIN
 END
 GO
 
-ALTER TABLE [todo].[TodoItem]
-                                ALTER COLUMN [SecureDeterministic] nvarchar(100) 
-                                COLLATE Latin1_General_BIN2 ENCRYPTED WITH(
-                                        ENCRYPTION_TYPE = DETERMINISTIC, 
-                                        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256', 
-                                        COLUMN_ENCRYPTION_KEY = [CEK_WITH_AKV]) NULL
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240328232558_InitialCreate'
+)
+BEGIN
+    ALTER TABLE [todo].[TodoItem]
+                                    ALTER COLUMN [SecureDeterministic] varbinary(100) 
+                                     ENCRYPTED WITH(
+                                            ENCRYPTION_TYPE = DETERMINISTIC, 
+                                            ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256', 
+                                            COLUMN_ENCRYPTION_KEY = [CEK_WITH_AKV]) NULL
+END;
 GO
 
-ALTER TABLE [todo].[TodoItem]
-                                ALTER COLUMN [SecureRandom] nvarchar(100) 
-                                COLLATE Latin1_General_BIN2 ENCRYPTED WITH(
-                                        ENCRYPTION_TYPE = RANDOMIZED, 
-                                        ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256', 
-                                        COLUMN_ENCRYPTION_KEY = [CEK_WITH_AKV]) NULL
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20240328232558_InitialCreate'
+)
+BEGIN
+    ALTER TABLE [todo].[TodoItem]
+                                    ALTER COLUMN [SecureRandom] varbinary(100) 
+                                     ENCRYPTED WITH(
+                                            ENCRYPTION_TYPE = RANDOMIZED, 
+                                            ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256', 
+                                            COLUMN_ENCRYPTION_KEY = [CEK_WITH_AKV]) NULL
+END;
 GO
 
 INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])

@@ -6,6 +6,7 @@ using Application.Services.Validators;
 using Azure;
 using Azure.Identity;
 using CorrelationId.Abstractions;
+using CorrelationId.HttpClient;
 using FluentValidation;
 using Infrastructure.Data;
 using Infrastructure.RapidApi.WeatherApi;
@@ -21,6 +22,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Package.Infrastructure.BackgroundServices;
 using Package.Infrastructure.Common;
+using Package.Infrastructure.Common.Contracts;
 using Package.Infrastructure.OpenAI.ChatApi;
 using SampleApp.BackgroundServices.Scheduler;
 using SampleApp.Bootstrapper.Automapper;
@@ -59,7 +61,7 @@ public static class IServiceCollectionExtensions
         return services;
     }
 
-    public static IServiceCollection RegisterInfrastructureServices(this IServiceCollection services, IConfiguration config)
+    public static IServiceCollection RegisterInfrastructureServices(this IServiceCollection services, IConfiguration config, bool hasHttpContext = false)
     {
         //this middleware will check the Azure App Config Sentinel for a change which triggers reloading the configuration
         //middleware triggers on http request, not background service scope
@@ -69,6 +71,7 @@ public static class IServiceCollectionExtensions
         }
 
         //LazyCache.AspNetCore, lightweight wrapper around memorycache; prevent race conditions when multiple threads attempt to refresh empty cache item
+        //https://github.com/alastairtree/LazyCache
         services.AddLazyCache();
 
         //https://docs.microsoft.com/en-us/aspnet/core/performance/caching/distributed
@@ -93,17 +96,19 @@ public static class IServiceCollectionExtensions
                 new GrpcMappingProfile() // map grpc <-> app 
             ]);
 
-        //IRequestContext - injected into repositories
-        services.AddScoped<IRequestContext>(provider =>
+        //IRequestContext - injected into repositories, cache managers, etc
+        services.AddScoped<IRequestContext<string>>(provider =>
         {
             var httpContext = provider.GetService<IHttpContextAccessor>()?.HttpContext;
-            var correlationContext = provider.GetService<ICorrelationContextAccessor>()?.CorrelationContext;
+
+            //https://github.com/stevejgordon/CorrelationId/wiki
+            var correlationId = provider.GetService<ICorrelationContextAccessor>()?.CorrelationContext?.CorrelationId
+                ?? Guid.NewGuid().ToString();
 
             //Background services will not have an http context
             if (httpContext == null)
             {
-                var correlationId = Guid.NewGuid().ToString();
-                return new Package.Infrastructure.Common.RequestContext(correlationId, $"BackgroundService-{correlationId}");
+                return new RequestContext<string>(correlationId, $"BackgroundService-{correlationId}");
             }
 
             var user = httpContext.User;
@@ -120,12 +125,17 @@ public static class IServiceCollectionExtensions
                 ?? "NoAuthImplemented"
                 ;
 
-            return new Package.Infrastructure.Common.RequestContext(correlationContext!.CorrelationId, auditId);
+            //determine tenantId from token claim or header
+            string? tenantId =
+                //AAD from user
+                user?.Claims.FirstOrDefault(c => c.Type == "http://schemas.microsoft.com/identity/claims/tenantid")?.Value;
+
+            return new RequestContext<string>(correlationId, auditId, tenantId);
         });
 
         //Infrastructure Services
 
-        //DB config change token
+        //https://learn.microsoft.com/en-us/aspnet/core/fundamentals/change-tokens?view=aspnetcore-8.0
         //services.AddSingleton<IDatabaseConfigurationChangeToken, DatabaseChangeToken>();
 
         //EF-sql repositories
@@ -176,6 +186,7 @@ public static class IServiceCollectionExtensions
                         //https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries
                         //sqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
                     })
+                    .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
                 );
 
             if (!_keyStoreProviderRegistered)
@@ -222,49 +233,37 @@ public static class IServiceCollectionExtensions
         if (configSection.Exists())
         {
             services.Configure<SampleApiRestClientSettings>(configSection);
-            //check auth configured
-            var scopes = config.GetSection("SampleApiRestClientSettings:Scopes").Get<string[]>();
-            if (scopes != null)
+
+            services.AddScoped(provider =>
             {
-                services.AddScoped(provider =>
+                //DefaultAzureCredential checks env vars first, then checks other - managed identity, etc
+                //so if we need a 'client' Entra App Reg, set the env vars
+                if (config.GetValue<string>("SampleApiRestClientSettings:ClientId") != null)
                 {
-                    //DefaultAzureCredential checks env vars first, then checks other - managed identity, etc
-                    //so if we need a 'client' AAD App Reg, set the env vars
-                    if (config.GetValue<string>("SampleApiRestClientSettings:ClientId") != null)
-                    {
-                        Environment.SetEnvironmentVariable("AZURE_TENANT_ID", config.GetValue<string>("SampleApiRestClientSettings:TenantId"));
-                        Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", config.GetValue<string>("SampleApiRestClientSettings:ClientId"));
-                        Environment.SetEnvironmentVariable("AZURE_CLIENT_SECRET", config.GetValue<string>("SampleApiRestClientSettings:ClientSecret"));
-                    }
-                    return new SampleRestApiAuthMessageHandler(scopes);
-                });
-            }
-            var httpClientBuilder = services.AddHttpClient<ISampleApiRestClient, SampleApiRestClient>(options =>
-            {
-                options.BaseAddress = new Uri(config.GetValue<string>("SampleApiRestClientSettings:BaseUrl")!); //HttpClient will get injected
+                    Environment.SetEnvironmentVariable("AZURE_TENANT_ID", config.GetValue<string>("SampleApiRestClientSettings:TenantId"));
+                    Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", config.GetValue<string>("SampleApiRestClientSettings:ClientId"));
+                    Environment.SetEnvironmentVariable("AZURE_CLIENT_SECRET", config.GetValue<string>("SampleApiRestClientSettings:ClientSecret"));
+                }
+                var scopes = config.GetSection("SampleApiRestClientSettings:Scopes").Get<string[]>();
+                return new SampleRestApiAuthMessageHandler(scopes!);
             });
 
-            //TODO - move this to register Api services
-            //integration testing breaks since there is no existing http request, so no headers to propagate
-            //'app.UseHeaderPropagation()' required. Header propagation can only be used within the context of an HTTP request, not a test.
-            //.AddHeaderPropagation(options =>
-            //{
-            //    options.Headers.Add("x-request-id");
-            //    options.Headers.Add("x-correlation-id");
-            //}); 
-            //.AddCorrelationIdForwarding();
-
-            //auth is configured
-            if (scopes != null)
+            var httpClientBuilder = services.AddHttpClient<ISampleApiRestClient, SampleApiRestClient>(provider =>
             {
-                httpClientBuilder.AddHttpMessageHandler<SampleRestApiAuthMessageHandler>();
-            }
-
+                provider.BaseAddress = new Uri(config.GetValue<string>("SampleApiRestClientSettings:BaseUrl")!); //HttpClient will get injected
+            })
+            .AddHttpMessageHandler<SampleRestApiAuthMessageHandler>(); //SendAysnc pipeline gets/caches access token
             //resiliency
             //.AddPolicyHandler(PollyRetry.GetHttpRetryPolicy())
             //.AddPolicyHandler(PollyRetry.GetHttpCircuitBreakerPolicy());
             //Microsoft.Extensions.Http.Resilience - https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience?tabs=dotnet-cli
             httpClientBuilder.AddStandardResilienceHandler();
+            //needs to be running in an HttpContext; otherwise no headers to propagate (breaks integration tests)
+            if (hasHttpContext)
+            {
+                httpClientBuilder.AddCorrelationIdForwarding();
+                httpClientBuilder.AddHeaderPropagation();
+            }
         }
 
         //OpenAI chat service

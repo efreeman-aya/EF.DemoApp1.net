@@ -1,8 +1,10 @@
 ﻿using Application.Contracts.Model;
 using Application.Contracts.Services;
 using Asp.Versioning;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Package.Infrastructure.Data.Contracts;
+using Package.Infrastructure.AspNetCore;
+using Package.Infrastructure.Common.Contracts;
 using Swashbuckle.AspNetCore.Annotations;
 using System.Text.Json;
 using AppConstants = Application.Contracts.Constants.Constants;
@@ -14,7 +16,7 @@ namespace SampleApp.Api.Controllers;
 [ApiVersion("1.0")]
 [ApiVersion("1.1")]
 [Route("api/v{version:apiVersion}/[controller]")]
-public class TodoItemsController(ITodoService todoService) : ControllerBase
+public class TodoItemsController(ITodoService todoService) : ControllerBase()
 {
     private readonly ITodoService _todoService = todoService;
 
@@ -27,6 +29,7 @@ public class TodoItemsController(ITodoService todoService) : ControllerBase
     [MapToApiVersion("1.0")]
     [SwaggerResponse((int)HttpStatusCode.OK, "Success", typeof(PagedResponse<TodoItemDto>))]
     [HttpGet]
+    //[Authorize]
     public async Task<ActionResult<PagedResponse<TodoItemDto>>> GetPage(int pageSize = 10, int pageIndex = 1)
     {
         var items = await _todoService.GetPageAsync(pageSize, pageIndex);
@@ -68,15 +71,21 @@ public class TodoItemsController(ITodoService todoService) : ControllerBase
     /// <summary>
     /// Saves a new TodoItem
     /// </summary>
+    /// <param name="hostEnv"></param>
     /// <param name="todoItem"></param>
     /// <returns>The new TodoItem that was saved</returns>
     [HttpPost]
     [SwaggerResponse((int)HttpStatusCode.Created, "Success", typeof(TodoItemDto))]
+    [SwaggerResponse((int)HttpStatusCode.BadRequest, "Model Binding Error", typeof(ValidationProblemDetails))]
     [SwaggerResponse((int)HttpStatusCode.BadRequest, "Validation Error", typeof(ProblemDetails))]
-    public async Task<ActionResult<TodoItemDto>> PostTodoItem(TodoItemDto todoItem)
+    public async Task<ActionResult<TodoItemDto>> PostTodoItem([FromServices] IHostEnvironment hostEnv, TodoItemDto todoItem)
     {
-        todoItem = await _todoService.AddItemAsync(todoItem);
-        return CreatedAtAction(nameof(PostTodoItem), new { id = todoItem.Id }, todoItem);
+        var result = await _todoService.AddItemAsync(todoItem);
+        return result.Match<ActionResult<TodoItemDto>>(
+            dto => CreatedAtAction(nameof(PostTodoItem), new { id = dto!.Id }, dto),
+            err => hostEnv.BuildProblemDetailsResponse(exception: err, traceId: HttpContext.TraceIdentifier) //throw err // BadRequest(err.Message)
+            );
+
     }
 
     /// <summary>
@@ -93,13 +102,12 @@ public class TodoItemsController(ITodoService todoService) : ControllerBase
         if (todoItem.Id != Guid.Empty && todoItem.Id != id)
         {
             return BadRequest($"{AppConstants.ERROR_URL_BODY_ID_MISMATCH}: {id} <> {todoItem.Id}");
-            //throw new ValidationException($"{Constants.ERROR_URL_BODY_ID_MISMATCH}: {id} != {todoItem.Id}");
         }
 
-        todoItem.Id = id;
-        TodoItemDto? todoUpdated = await _todoService.UpdateItemAsync(todoItem);
-
-        return Ok(todoUpdated);
+        var result = await _todoService.UpdateItemAsync(todoItem);
+        return result.Match<ActionResult<TodoItemDto>>(
+            dto => dto is null ? NotFound(id) : Ok(dto),
+            err => BadRequest(err.Message));
     }
 
     /// <summary>

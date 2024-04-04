@@ -3,7 +3,8 @@ using Domain.Shared.Enums;
 using Infrastructure.Data;
 using Infrastructure.Repositories;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Package.Infrastructure.Common;
+using Moq;
+using Package.Infrastructure.Common.Contracts;
 using Package.Infrastructure.Data.Contracts;
 using Test.Support;
 
@@ -24,9 +25,9 @@ public class TodoRepositoryTrxnTests : UnitTestBase
         //InMemory setup & seed
         var dbTrxn = new InMemoryDbBuilder().BuildInMemory<TodoDbContextTrxn>();
 
-        var src = new RequestContext(Guid.NewGuid().ToString(), "Test.Unit");
+        var src = new RequestContext<string>(Guid.NewGuid().ToString(), "Test.Unit");
         var repoTrxn = new TodoRepositoryTrxn(dbTrxn, src);
-        var todo = new TodoItem("wash car");
+        var todo = new TodoItem("wash car") { CreatedBy = "Test.Unit" };
 
         //act & assert
 
@@ -51,7 +52,7 @@ public class TodoRepositoryTrxnTests : UnitTestBase
         Assert.AreEqual(newName, todo?.Name);
 
         //delete
-        await repoTrxn.DeleteAsync<TodoItem>(id);
+        await repoTrxn.DeleteAsync<TodoItem>(It.IsAny<CancellationToken>(), id);
         await repoTrxn.SaveChangesAsync(OptimisticConcurrencyWinner.Throw);
 
         todo = await repoTrxn.GetEntityAsync<TodoItem>(filter: t => t.Id == id);

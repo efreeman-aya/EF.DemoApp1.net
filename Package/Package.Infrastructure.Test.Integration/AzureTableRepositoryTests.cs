@@ -1,5 +1,4 @@
-﻿using Domain.Shared.Enums;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Package.Infrastructure.Common.Extensions;
 using Package.Infrastructure.Table;
 using Package.Infrastructure.Test.Integration.Model;
@@ -89,9 +88,7 @@ public class AzureTableRepositoryTests : IntegrationTestBase
             Assert.IsNotNull(todos);
             fullList.AddRange(todos);
         }
-#pragma warning disable S2589 //False positive - Boolean expressions should not be gratuitous
         while (continuationToken != null);
-#pragma warning restore S2589 // Boolean expressions should not be gratuitous
 
         Assert.IsNotNull(fullList);
     }
@@ -119,10 +116,7 @@ public class AzureTableRepositoryTests : IntegrationTestBase
             Assert.IsNotNull(todos);
             fullList.AddRange(todos);
         }
-#pragma warning disable S2589 // False positive - Boolean expressions should not be gratuitous
         while (continuationToken != null);
-#pragma warning restore S2589 // Boolean expressions should not be gratuitous
-
         Assert.IsNotNull(fullList);
     }
 

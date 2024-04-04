@@ -2,13 +2,13 @@
 using Application.Contracts.Model;
 using AutoMapper;
 using Domain.Shared.Enums;
-using Package.Infrastructure.Common;
+using Package.Infrastructure.Common.Contracts;
 using Package.Infrastructure.Data;
 using Package.Infrastructure.Data.Contracts;
 
 namespace Infrastructure.Repositories;
 
-public class TodoRepositoryQuery(TodoDbContextQuery dbContext, IRequestContext rc, IMapper mapper) : RepositoryBase<TodoDbContextQuery>(dbContext, rc), ITodoRepositoryQuery
+public class TodoRepositoryQuery(TodoDbContextQuery dbContext, IRequestContext<string> rc, IMapper mapper) : RepositoryBase<TodoDbContextQuery, string>(dbContext, rc), ITodoRepositoryQuery
 {
     //compile frequently used query
     //https://learn.microsoft.com/en-us/ef/core/performance/advanced-performance-topics?tabs=with-di%2Cexpression-api-with-constant#compiled-queries
@@ -62,10 +62,11 @@ public class TodoRepositoryQuery(TodoDbContextQuery dbContext, IRequestContext r
         }
 
         //sort and filter have already been applied
-        //await SetNoLock(); //InMemoryDbContext does not support
+        await SetNoLock();
         (var data, var total) = await q.QueryPageProjectionAsync<TodoItem, TodoItemDto>(
-            mapper.ConfigurationProvider, pageSize: request.PageSize, pageIndex: request.PageIndex, includeTotal: true, cancellationToken: cancellationToken);
-        //await SetLock(); //InMemoryDbContext does not support
+            mapper.ConfigurationProvider, pageSize: request.PageSize, pageIndex: request.PageIndex, includeTotal: true, cancellationToken: cancellationToken)
+            .ConfigureAwait(ConfigureAwaitOptions.None);
+        await SetLock();
         return new PagedResponse<TodoItemDto>
         {
             PageIndex = request.PageIndex,

@@ -26,12 +26,12 @@ namespace Functions;
 ///     
 /// https://learn.microsoft.com/en-us/azure/event-grid/delivery-and-retry
 /// </summary>
-public class FunctionEventGridTriggerBlob(ILogger<FunctionEventGridTriggerBlob> logger, IConfiguration configuration, 
+public class FunctionEventGridTriggerBlob(ILogger<FunctionEventGridTriggerBlob> logger, IConfiguration configuration,
     IOptions<Settings1> settings)
 {
     //private readonly ILogger<FunctionEventGridTriggerBlob> _logger = loggerFactory.CreateLogger<FunctionEventGridTriggerBlob>();
 
-    [Function("EventGridTriggerBlob")]
+    [Function(nameof(FunctionEventGridTriggerBlob))]
     public async Task Run([EventGridTrigger] EventGridEvent inputEvent)
     {
         _ = configuration.GetHashCode();

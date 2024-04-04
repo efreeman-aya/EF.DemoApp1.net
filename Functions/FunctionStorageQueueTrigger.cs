@@ -9,12 +9,12 @@ namespace Functions;
 /// If all five attempts fail, the functions runtime adds a message to a queue named <originalqueuename>-poison
 /// https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-storage-queue-trigger?tabs=python-v2%2Cin-process%2Cextensionv5&pivots=programming-language-csharp#poison-messages
 /// </summary>
-public class FunctionStorageQueueTrigger(ILogger<FunctionStorageQueueTrigger> logger, IConfiguration configuration, 
+public class FunctionStorageQueueTrigger(ILogger<FunctionStorageQueueTrigger> logger, IConfiguration configuration,
     IOptions<Settings1> settings)
 {
     //private readonly ILogger<FunctionStorageQueueTrigger> _logger = loggerFactory.CreateLogger<FunctionStorageQueueTrigger>();
 
-    [Function("QueueTrigger")]
+    [Function(nameof(FunctionStorageQueueTrigger))]
     public async Task Run([QueueTrigger("%StorageQueueName%", Connection = "StorageQueue1")] string queueItem)
     {
         _ = configuration.GetHashCode();

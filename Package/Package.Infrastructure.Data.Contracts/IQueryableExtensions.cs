@@ -1,8 +1,8 @@
 ﻿using AutoMapper;
 using AutoMapper.QueryableExtensions;
-using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
+using Package.Infrastructure.Common.Contracts;
 using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -14,8 +14,8 @@ public static class IQueryableExtensions
 
     /// <summary>
     /// Returns the IQueryable for further composition or streaming; 
-    /// client code expected to subsequently call GetListAsync() with the query to run it async and return paged results,
-    /// or iterate for streaming
+    /// client code expected to subsequently call ToListAsync() on the IQueryable<T> to return (paged) results,
+    /// or GetStream/GetStreamProjection which returns IAsyncEnumerable<T> for streaming
     /// </summary>
     /// <typeparam name="T"></typeparam>
     /// <param name="query"></param>
@@ -24,7 +24,7 @@ public static class IQueryableExtensions
     /// <param name="pageIndex">1-based; If null, then return IQueryable for streaming (no paging)</param>
     /// <param name="filter"></param>
     /// <param name="orderBy"></param>
-    /// <param name="splitQuery"></param>Discretionary; avoid cartesian explosion, applicable with Includes; understand the risks/repercussions (when paging, etc) of using this https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries
+    /// <param name="splitQuery">Discretionary; avoid cartesian explosion, applicable with Includes; understand the risks/repercussions (when paging, etc) of using this https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries</param>
     /// <param name="includes"></param>
     /// <returns></returns>
     public static IQueryable<T> ComposeIQueryable<T>(this IQueryable<T> query, bool tracking = false,
@@ -73,7 +73,7 @@ public static class IQueryableExtensions
     /// <param name="tracking"></param>
     /// <param name="filter"></param>
     /// <param name="orderBy"></param>
-    /// <param name="splitQuery"></param>Discretionary; avoid cartesian explosion, applicable with Includes; understand the risks/repercussions (when paging, etc) of using this https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries
+    /// <param name="splitQuery">Discretionary; avoid cartesian explosion, applicable with Includes; understand the risks/repercussions (when paging, etc) of using this https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries</param>
     /// <param name="includes"></param>
     /// <returns></returns>
     public static IAsyncEnumerable<T> GetStream<T>(this IQueryable<T> query, bool tracking = false, Expression<Func<T, bool>>? filter = null,
@@ -94,7 +94,7 @@ public static class IQueryableExtensions
     /// <param name="tracking"></param>
     /// <param name="filter"></param>
     /// <param name="orderBy"></param>
-    /// <param name="splitQuery"></param>Discretionary; avoid cartesian explosion, applicable with Includes; understand the risks/repercussions (when paging, etc) of using this https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries
+    /// <param name="splitQuery">Discretionary; avoid cartesian explosion, applicable with Includes; understand the risks/repercussions (when paging, etc) of using this https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries</param>
     /// <param name="includes"></param>
     /// <returns></returns>
     public static IAsyncEnumerable<TProject> GetStreamProjection<T, TProject>(this IQueryable<T> query, IConfigurationProvider mapperConfigProvider,

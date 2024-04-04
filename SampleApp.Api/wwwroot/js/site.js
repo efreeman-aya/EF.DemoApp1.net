@@ -11,11 +11,19 @@ const TodoItemStatus = {
     Completed: 4,
 };
 
-let todos = [];
+let pageIndex = 1;
+let pageSize = 10;
+let itemTotal = 0; //support for paging btnNext
 
-async function getItems() {
-    const response = await _utility.HttpSend("GET", urlTodo);
-    displayItems(response.data);
+async function getPage() {
+    if(pageIndex < 1) pageIndex = 1;
+    const url = `${urlTodo}?pageSize=${pageSize}&pageIndex=${pageIndex}`;
+    const response = await _utility.HttpSend("GET", url);
+    if (response.data != null) {
+        itemTotal = response.data.total;
+        displayCount();
+        displayItems(response.data);
+    }
 }
 
 function editItem(item) {
@@ -27,7 +35,7 @@ async function deleteItem(id) {
     clearEditRow();
     const url = `${urlTodo}/${id}`; 
     await _utility.HttpSend("DELETE", url, null, null, "");
-    await getItems();
+    await getPage();
 }
 
 async function saveItem() {
@@ -53,7 +61,7 @@ async function saveItem() {
     const response = await _utility.HttpSend(method, url, item);
     if (response.ok) {
         clearEditRow();
-        await getItems();
+        await getPage();
     }
 }
 
@@ -71,9 +79,9 @@ function popEdit(id, isComplete, name, secureRandom, secureDeterministic) {
     document.getElementById('edit-secure-deterministic').value = secureDeterministic;
 }
 
-function displayCount(itemCount) {
-    const name = (itemCount === 1) ? 'to-do' : 'to-dos';
-    document.getElementById('counter').innerText = `${itemCount} ${name}`;
+function displayCount() {
+    const name = (itemTotal === 1) ? 'to-do' : 'to-dos';
+    document.getElementById('counter').innerText = `${itemTotal} ${name}`;
 }
 
 function displayItems(data) {
@@ -81,7 +89,7 @@ function displayItems(data) {
     tBody.innerHTML = '';
 
     const items = data.data;
-    displayCount(items.length);
+    displayCount(data.total);
 
     const button = document.createElement('button');
 
@@ -127,14 +135,42 @@ function displayItems(data) {
         td.appendChild(deleteButton);
     });
 
-    todos = data;
-
+    const totalPages = Math.floor(data.total / pageSize) + (data.total % pageSize > 0 ? 1 : 0);  
+    currentPageSpan.textContent = `Page ${pageIndex} of ${totalPages}`;
+    prevBtn.disabled = currentPage === 1;
+    nextBtn.disabled = currentPage === totalPages;
 }
+
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const currentPageSpan = document.getElementById('currentPage');
+const pageSizeSelect = document.getElementById('pageSizeSelect');
 
 //wire up event handlers
 document.getElementById("btn-save").addEventListener("click", (event) => {
     saveItem();
 });
 
+prevBtn.addEventListener('click', () => {
+    if (pageIndex > 1) {
+        pageIndex--;
+        getPage();
+    }
+});
+
+nextBtn.addEventListener('click', () => {
+    const maxPage = Math.ceil(itemTotal / pageSize); //need page state ItemTotal for paging
+    if (pageIndex < maxPage) {
+        pageIndex++;
+        getPage();
+    }
+});
+
+pageSizeSelect.addEventListener('change', (event) => {
+    pageSize = parseInt(event.target.value);
+    pageIndex = 1; // Reset to first page when changing page size
+    getPage();
+});
+
 //initialize
-getItems();
+getPage();

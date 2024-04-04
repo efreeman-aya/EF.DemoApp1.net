@@ -1,52 +1,22 @@
-﻿using Application.Contracts.Model;
+﻿using Application.Contracts.Interfaces;
+using Application.Contracts.Model;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 using Domain.Model;
-using Infrastructure.Data;
 using Infrastructure.Repositories;
-using Package.Infrastructure.Common;
-using Package.Infrastructure.Data.Contracts;
-using SampleApp.Bootstrapper.Automapper;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Package.Infrastructure.Common.Contracts;
 using Test.Support;
-
-//https://github.com/dotnet/BenchmarkDotNet
 
 namespace Test.Benchmarks;
 
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.FastestToSlowest)]
 [RankColumn]
-public class RepositoryBenchmarks
+public class RepositoryBenchmarks : DbIntegrationTestBase
 {
-    //Infrastructure
-    private readonly TodoRepositoryQuery _repo;
-
-    public RepositoryBenchmarks()
-    {
-        var mapper = ConfigureAutomapper.CreateMapper(
-            [
-                new MappingProfile(),  //map domain <-> app 
-                                       //new GrpcMappingProfile() // map grpc <-> app 
-            ]);
-
-        TodoDbContextQuery db = new InMemoryDbBuilder()
-            .SeedDefaultEntityData()
-            .UseEntityData(entities =>
-            {
-                //custom data scenario that default seed data does not cover
-                entities.Add(new TodoItem("a entity"));
-            })
-            .BuildInMemory<TodoDbContextQuery>();
-
-        var src = new RequestContext(Guid.NewGuid().ToString(), "Test.Unit");
-        _repo = new TodoRepositoryQuery(db, src, mapper);
-    }
-
-    [IterationSetup]
-    public void Setup()
-    {
-        _ = GetHashCode();
-    }
+    private ITodoRepositoryQuery _repo = null!;
 
     [Benchmark]
     public async Task Repo_SearchTodoItemAsync()
@@ -61,5 +31,30 @@ public class RepositoryBenchmarks
         _ = await _repo.QueryPageAsync<TodoItem>(pageSize: 10, pageIndex: 1);
     }
 
+    //BenchmarkDotNet does not support async setup/teardown
+    //https://github.com/dotnet/BenchmarkDotNet/issues/1738#issuecomment-1687832731
 
+    /// <summary>
+    /// Reset & reseed DB here to avoid the overhead of resetting the database inside the benchmark test
+    /// </summary>
+    [IterationSetup]
+    public static void IterationSetup()
+    {
+        List<Action> seedFactories = [() => DbContext.SeedEntityData()];
+        List<string>? seedPaths = [TestConfigSection.GetValue<string>("SeedFilePath")];
+        ResetDatabaseAsync(true, seedPaths: seedPaths, seedFactories: seedFactories).GetAwaiter().GetResult(); //no async support
+    }
+
+    [GlobalSetup]
+    public void GlobalSetup()
+    {
+        ConfigureTestInstanceAsync(nameof(RepositoryBenchmarks)).GetAwaiter().GetResult(); //no async support
+        _repo = (TodoRepositoryQuery)ServiceScope.ServiceProvider.GetRequiredService(typeof(ITodoRepositoryQuery));
+    }
+
+    [GlobalCleanup]
+    public static void GlobalCleanup()
+    {
+        BaseClassCleanup().GetAwaiter().GetResult(); //no async support
+    }
 }

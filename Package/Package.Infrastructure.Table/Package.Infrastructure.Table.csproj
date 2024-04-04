@@ -8,13 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Data.Tables" Version="12.8.2" />
-    <PackageReference Include="Microsoft.Extensions.Azure" Version="1.7.1" />
+    <PackageReference Include="Azure.Data.Tables" Version="12.8.3" />
+    <PackageReference Include="Microsoft.Extensions.Azure" Version="1.7.2" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Package.Infrastructure.Common\Package.Infrastructure.Common.csproj" />
-    <ProjectReference Include="..\Package.Infrastructure.Data.Contracts\Package.Infrastructure.Data.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

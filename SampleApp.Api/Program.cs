@@ -1,5 +1,4 @@
 using Azure.Identity;
-using Infrastructure.Configuration;
 using Microsoft.AspNetCore.DataProtection;
 using SampleApp.Api;
 using SampleApp.Bootstrapper;
@@ -36,16 +35,18 @@ try
     if (credOptionsTenantId != null) credentialOptions.SharedTokenCacheTenantId = credOptionsTenantId;
     var credential = new DefaultAzureCredential(credentialOptions);
 
-    string env = builder.Configuration.GetValue<string>("ASPNETCORE_ENVIRONMENT") ?? "Development";
+    var env = builder.Configuration.GetValue<string>("ASPNETCORE_ENVIRONMENT") ?? "Development";
 
     //configuration
+    string? endpoint;
 
     //Azure AppConfig
-    var endpoint = builder.Configuration.GetValue<string>("AzureAppConfig:Endpoint");
-    if (!string.IsNullOrEmpty(endpoint))
+    var appConfig = builder.Configuration.GetSection("AzureAppConfig");
+    if (appConfig != null)
     {
+        endpoint = appConfig.GetValue<string>("Endpoint");
         loggerStartup.LogInformation("{ServiceName} - Add Azure App Configuration {Endpoint} {Environment}", SERVICE_NAME, endpoint, env);
-        builder.AddAzureAppConfiguration(endpoint, credential, env, builder.Configuration.GetValue<string>("AzureAppConfig:Sentinel"), new TimeSpan(0, 0, 30));
+        builder.AddAzureAppConfiguration(endpoint!, credential, env, appConfig.GetValue<string>("Sentinel"), appConfig.GetValue("RefreshCacheExpireTimeSpan", new TimeSpan(1, 0, 0)));
     }
 
     //Azure Key Vault - load AKV direct (not through Azure AppConfig or App Service-Configuration-AppSettings)
@@ -86,16 +87,16 @@ try
     loggerStartup.LogInformation("{ServiceName} - Register services.", SERVICE_NAME);
     var config = builder.Configuration;
     builder.Services
-        //api services - controllers, versioning, health checks, swagger, telemetry
-        .RegisterApiServices(config)
-        //infrastructure - caches, DbContexts, repos, external service proxies, startup tasks
-        .RegisterInfrastructureServices(config)
+        //infrastructure - caches, DbContexts, repos, external service sdks/proxies, startup tasks
+        .RegisterInfrastructureServices(config, true)
         //domain services
         .RegisterDomainServices(config)
         //app services
         .RegisterApplicationServices(config)
         //background services
-        .RegisterBackgroundServices(config);
+        .RegisterBackgroundServices(config)
+        //api services - controllers, versioning, health checks, swagger, telemetry
+        .RegisterApiServices(config);
 
     var app = builder.Build().ConfigurePipeline();
     await app.RunStartupTasks();

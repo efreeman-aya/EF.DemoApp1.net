@@ -8,6 +8,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Package.Infrastructure.BackgroundServices;
+using Package.Infrastructure.Cache;
+using Package.Infrastructure.Common.Contracts;
 using Package.Infrastructure.OpenAI.ChatApi;
 using Package.Infrastructure.Test.Integration.Blob;
 using Package.Infrastructure.Test.Integration.Cosmos;
@@ -58,7 +60,9 @@ public abstract class IntegrationTestBase
             // Use DefaultAzureCredential by default
             builder.UseCredential(new DefaultAzureCredential());
 
-            //Blob 
+            //Azure storage generating SAS tokens require a StorageSharedKeyCredential or the managed identity to have permissions to create SAS tokens.
+            //StorageSharedKeyCredential storageSharedKeyCredential = new(accountName, accountKey);
+            //https://learn.microsoft.com/en-us/azure/storage/common/storage-sas-overview
             configSection = Config.GetSection("ConnectionStrings:AzureBlobStorageAccount1");
             if (configSection.Exists())
             {
@@ -85,17 +89,22 @@ public abstract class IntegrationTestBase
             }
 
             //KeyVault
-            configSection = Config.GetSection("KeyVaultManager1");
+            configSection = Config.GetSection(KeyVaultManager1Settings.ConfigSectionName);
             if (configSection.Exists())
             {
-                //(w/DefaultAzureCredential)
-                builder.AddSecretClient(new Uri(configSection.GetValue<string>("VaultUrl")!)).WithName("KeyVaultManager1");
-                builder.AddKeyClient(new Uri(configSection.GetValue<string>("VaultUrl")!)).WithName("KeyVaultManager1");
-                builder.AddCertificateClient(new Uri(configSection.GetValue<string>("VaultUrl")!)).WithName("KeyVaultManager1");
+                var akvUrl = configSection.GetValue<string>("VaultUrl")!;
+                var name = configSection.GetValue<string>("KeyVaultClientName")!;
+                builder.AddSecretClient(new Uri(akvUrl)).WithName(name);
+                builder.AddKeyClient(new Uri(akvUrl)).WithName(name);
+                builder.AddCertificateClient(new Uri(akvUrl)).WithName(name);
+
+                //wrapper for key vault sdks
+                services.Configure<KeyVaultManager1Settings>(configSection);
+                services.AddSingleton<IKeyVaultManager1, KeyVaultManager1>();
             }
         });
 
-        //BlobStorage
+        //BlobRepository
         configSection = Config.GetSection(BlobRepositorySettings1.ConfigSectionName);
         if (configSection.Exists())
         {
@@ -103,7 +112,7 @@ public abstract class IntegrationTestBase
             services.Configure<BlobRepositorySettings1>(configSection);
         }
 
-        //TableStorage
+        //TableRepository
         configSection = Config.GetSection(TableRepositorySettings1.ConfigSectionName);
         if (configSection.Exists())
         {
@@ -117,14 +126,6 @@ public abstract class IntegrationTestBase
         {
             services.AddSingleton<IEventGridPublisher1, EventGridPublisher1>();
             services.Configure<EventGridPublisherSettings1>(configSection);
-        }
-
-        //KeyVaultManager
-        configSection = Config.GetSection(KeyVaultManagerSettings1.ConfigSectionName);
-        if (configSection.Exists())
-        {
-            services.AddSingleton<IKeyVaultManager1, KeyVaultManager1>();
-            services.Configure<KeyVaultManagerSettings1>(configSection);
         }
 
         //CosmosDb - CosmosClient is thread-safe. Its recommended to maintain a single instance of CosmosClient per lifetime of the application which enables efficient connection management and performance.
@@ -144,6 +145,43 @@ public abstract class IntegrationTestBase
                 });
             }
         }
+
+        //LazyCache.AspNetCore, lightweight wrapper around memorycache; prevent race conditions when multiple threads attempt to refresh empty cache item
+        //https://github.com/alastairtree/LazyCache
+        services.AddLazyCache();
+
+        //Redis distributed cache
+        //cache providers - https://docs.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-5.0#multiple-cache-providers
+        //multiple redis instances requires a different pattern - https://stackoverflow.com/questions/71329765/how-to-use-multiple-implementations-of-microsoft-extensions-caching-stackexchang
+        connectionString = Config.GetConnectionString("Redis");
+        if (!string.IsNullOrEmpty(connectionString))
+        {
+            services.AddStackExchangeRedisCache(options =>
+            {
+                options.Configuration = connectionString;
+                options.InstanceName = "redis1";
+            });
+        }
+        else
+        {
+            services.AddDistributedMemoryCache(); //local server only, not distributed. Helps with tests
+        }
+
+        //distributed cache manager
+        services.AddScoped(provider =>
+        {
+            return new DistributedCacheManagerOptions
+            {
+                TenantId = "SomeTenantId"
+            };
+        });
+        services.AddScoped<IDistributedCacheManager, DistributedCacheManager>();
+
+        //IRequestContext - injected into repositories, cache managers, etc
+        services.AddScoped<IRequestContext<string>>(provider =>
+        {
+            return new RequestContext<string>(Guid.NewGuid().ToString(), "IntegrationTest", "SomeTenantId");
+        });
 
         //external weather service
         configSection = Config.GetSection(WeatherServiceSettings.ConfigSectionName);

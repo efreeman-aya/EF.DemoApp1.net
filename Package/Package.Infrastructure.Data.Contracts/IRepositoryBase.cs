@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using Microsoft.EntityFrameworkCore.Query;
+using Package.Infrastructure.Common.Contracts;
 using System.Linq.Expressions;
 
 namespace Package.Infrastructure.Data.Contracts;
@@ -16,9 +17,9 @@ public interface IRepositoryBase
 
     void Delete<T>(T entity) where T : EntityBase;
 
-    Task DeleteAsync<T>(params object[] keys) where T : class;
+    Task DeleteAsync<T>(CancellationToken cancellationToken = default, params object[] keys) where T : class;
 
-    Task DeleteAsync<T>(Expression<Func<T, bool>> filter) where T : class;
+    Task DeleteAsync<T>(Expression<Func<T, bool>> filter, CancellationToken cancellationToken = default) where T : class;
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 
@@ -31,7 +32,7 @@ public interface IRepositoryBase
         params Func<IQueryable<T>, IIncludableQueryable<T, object?>>[] includes)
         where T : class;
 
-    Task<PagedResponse<T>> QueryPageAsync<T>(bool tracking = false,
+    Task<PagedResponse<T>> QueryPageAsync<T>(bool readNoLock = true, bool tracking = false,
         int? pageSize = null, int? pageIndex = null,
         Expression<Func<T, bool>>? filter = null,
         Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null, bool includeTotal = false, bool splitQuery = false,
@@ -41,6 +42,7 @@ public interface IRepositoryBase
 
     Task<PagedResponse<TProject>> QueryPageProjectionAsync<T, TProject>(
         IConfigurationProvider mapperConfigProvider,
+        bool readNoLock = true,
         int? pageSize = null, int? pageIndex = null,
         Expression<Func<T, bool>>? filter = null,
         Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null, bool includeTotal = false, bool splitQuery = false,

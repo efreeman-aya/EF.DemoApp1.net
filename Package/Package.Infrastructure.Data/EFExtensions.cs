@@ -25,11 +25,11 @@ namespace Package.Infrastructure.Data;
  * be included in an update statement by the entity’s primary key upon SaveChangesAsync().
  * 
  * Filter parameter structure:
- *    Expression<Func<ContextEntity, bool>>? filter = null;
+ *    Expression<Func<Entity, bool>>? filter = null;
  *    if (someparameter != null) filter = t => t.Property == someparameter;
  * 
  * Include parameter structure: 
- *   List<Func<IQueryable<ContextEntity>, IIncludableQueryable<ContextEntity, object?>>> includes = new List<Func<IQueryable<ContextEntity>, IIncludableQueryable<ContextEntity, object?>>>(); 
+ *   List<Func<IQueryable<Entity>, IIncludableQueryable<Entity, object?>>> includes = new List<Func<IQueryable<Entity>, IIncludableQueryable<Entity, object?>>>(); 
  *   if (includeChildren) includes.Add(e1 => e1.Include(e => e.Children));
  */
 
@@ -66,7 +66,7 @@ public static class EFExtensions
     /// <returns></returns>
     public static async Task<T?> GetByKeyAsync<T>(this DbContext context, bool tracking = false, CancellationToken cancellationToken = default, params object[] keys) where T : class
     {
-        T? entity = await context.Set<T>().FindAsync(keys, cancellationToken);
+        T? entity = await context.Set<T>().FindAsync(keys, cancellationToken).ConfigureAwait(false);
         if (entity != null && !tracking) context.Entry(entity).State = EntityState.Detached;
         return entity;
     }
@@ -109,9 +109,9 @@ public static class EFExtensions
     /// <typeparam name="T"></typeparam>
     /// <param name="context"></param>
     /// <param name="entity"></param>
-    public static async Task UpsertAsync<T>(this DbContext context, T entity) where T : EntityBase
+    public static async Task UpsertAsync<T>(this DbContext context, T entity, CancellationToken cancellationToken = default) where T : EntityBase
     {
-        if (!await context.Set<T>().AnyAsync(e => e.Id == entity.Id))
+        if (!await context.Set<T>().AnyAsync(e => e.Id == entity.Id, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None))
             Create(context, ref entity);
         else
             UpdateFull(context, ref entity);
@@ -135,7 +135,7 @@ public static class EFExtensions
     /// <param name="keys"></param>
     public static async Task DeleteAsync<T>(this DbContext context, CancellationToken cancellationToken = default, params object[] keys) where T : class
     {
-        T? entity = await context.Set<T>().FindAsync(keys, cancellationToken);
+        T? entity = await context.Set<T>().FindAsync(keys, cancellationToken).ConfigureAwait(false);
         if (entity != null) context.Set<T>().Remove(entity);
     }
 
@@ -193,7 +193,7 @@ public static class EFExtensions
     /// <returns></returns>
     public static async Task<bool> ExistsAsync<T>(this DbSet<T> dbSet, Expression<Func<T, bool>> filter, CancellationToken cancellationToken = default) where T : class
     {
-        return await dbSet.AnyAsync(filter, cancellationToken);
+        return await dbSet.AnyAsync(filter, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
     }
 
     /// <summary>
@@ -205,7 +205,7 @@ public static class EFExtensions
     /// <returns></returns>
     public static async Task<bool> ExistsAsync<T>(this DbSet<T> dbSet, CancellationToken cancellationToken = default, params object[] keys) where T : class
     {
-        return await dbSet.FindAsync(keys, cancellationToken) != null;
+        return await dbSet.FindAsync(keys, cancellationToken).ConfigureAwait(false) != null;
     }
 
     /// <summary>
@@ -214,8 +214,12 @@ public static class EFExtensions
     /// <param name="filter"></param>
     public static async Task DeleteAsync<T>(this DbSet<T> dbSet, Expression<Func<T, bool>> filter, CancellationToken cancellationToken = default) where T : class
     {
-        var objects = (await QueryPageAsync<T>(dbSet, false, null, null, filter, cancellationToken: cancellationToken)).Item1;
-        Parallel.ForEach(objects, o => { dbSet.Remove(o); });
+        var objects = (await QueryPageAsync(dbSet, false, null, null, filter, cancellationToken: cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None)).Item1;
+        //Parallel.ForEach(objects, o => { dbSet.Remove(o); });
+        foreach (var item in objects)
+        {
+            dbSet.Remove(item);
+        }
     }
 
     /// <summary>
@@ -252,7 +256,7 @@ public static class EFExtensions
     /// <returns></returns>
     public static async Task<T?> GetByKeyAsync<T>(this DbSet<T> dbSet, CancellationToken cancellationToken = default, params object[] keys) where T : class
     {
-        return await dbSet.FindAsync(keys, cancellationToken);
+        return await dbSet.FindAsync(keys, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -274,7 +278,7 @@ public static class EFExtensions
         where T : class
     {
         IQueryable<T> query = dbSet.ComposeIQueryable(tracking, null, null, filter, orderBy, splitQuery, includes);
-        return await query.FirstOrDefaultAsync(cancellationToken);
+        return await query.FirstOrDefaultAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
     }
 
     /// <summary>
@@ -291,8 +295,8 @@ public static class EFExtensions
     /// <param name="splitQuery"></param>Discretionary; avoid cartesian explosion, applicable with Includes; understand the risks/repercussions (when paging, etc) of using this https://learn.microsoft.com/en-us/ef/core/querying/single-split-queries
     /// <param name="cancellationToken"></param>
     /// <param name="includes"></param>
-    /// <returns>List<T> page results with total (-1 if includeTotal = false) </returns>
-    public static async Task<(List<T>, int)> QueryPageAsync<T>(this IQueryable<T> query, bool tracking = false,
+    /// <returns>IReadOnlyList<T> page results with total (-1 if includeTotal = false) </returns>
+    public static async Task<(IReadOnlyList<T>, int)> QueryPageAsync<T>(this IQueryable<T> query, bool tracking = false,
         int? pageSize = null, int? pageIndex = null,
         Expression<Func<T, bool>>? filter = null,
         Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null, bool includeTotal = false, bool splitQuery = false,
@@ -300,9 +304,9 @@ public static class EFExtensions
         params Func<IQueryable<T>, IIncludableQueryable<T, object?>>[] includes)
         where T : class
     {
-        int total = includeTotal ? await query.ComposeIQueryable(filter: filter).CountAsync(cancellationToken) : -1;
+        int total = includeTotal ? await query.ComposeIQueryable(filter: filter).CountAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None) : -1;
         query = query.ComposeIQueryable(tracking, pageSize, pageIndex, filter, orderBy, splitQuery, includes);
-        return (await query.ToListAsync(cancellationToken), total);
+        return ((await query.ToListAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None)).AsReadOnly(), total);
     }
 
     /// <summary>
@@ -320,7 +324,7 @@ public static class EFExtensions
     /// <param name="cancellationToken"></param>
     /// <param name="includes"></param>
     /// <returns>List<TProject> page results with total (-1 if includeTotal = false) </returns>
-    public static async Task<(List<TProject>, int)> QueryPageProjectionAsync<T, TProject>(this IQueryable<T> query,
+    public static async Task<(IReadOnlyList<TProject>, int)> QueryPageProjectionAsync<T, TProject>(this IQueryable<T> query,
         IConfigurationProvider mapperConfigProvider,
         int? pageSize = null, int? pageIndex = null,
         Expression<Func<T, bool>>? filter = null,
@@ -329,10 +333,10 @@ public static class EFExtensions
         params Func<IQueryable<T>, IIncludableQueryable<T, object?>>[] includes)
         where T : class
     {
-        int total = includeTotal ? await query.ComposeIQueryable(filter: filter).CountAsync(cancellationToken) : -1;
+        int total = includeTotal ? await query.ComposeIQueryable(filter: filter).CountAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None) : -1;
         query = query.ComposeIQueryable(false, pageSize, pageIndex, filter, orderBy, splitQuery, includes);
-        var results = await query.ProjectTo<TProject>(mapperConfigProvider).ToListAsync(cancellationToken);
-        return (results, total);
+        var results = await query.ProjectTo<TProject>(mapperConfigProvider).ToListAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
+        return (results.AsReadOnly(), total);
     }
 
     /// <summary>
@@ -344,7 +348,7 @@ public static class EFExtensions
     /// <returns></returns>
     public static async Task<long> GetCountAsync<T>(this DbSet<T> dbSet, Expression<Func<T, bool>>? filter = null, CancellationToken cancellationToken = default) where T : class
     {
-        return await dbSet.ComposeIQueryable(filter: filter).CountAsync(cancellationToken);
+        return await dbSet.ComposeIQueryable(filter: filter).CountAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
     }
 
     /// <summary>

@@ -1,7 +1,6 @@
 ﻿using CorrelationId;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
-using Microsoft.OpenApi.Models;
 using Package.Infrastructure.AspNetCore;
 using SampleApp.Api.Grpc;
 using SampleApp.Api.Middleware;
@@ -12,14 +11,14 @@ public static partial class WebApplicationBuilderExtensions
 {
     public static WebApplication ConfigurePipeline(this WebApplication app)
     {
-        if (app.Configuration.GetValue<string>("AzureAppConfig:Endpoint") != null)
+        var config = app.Configuration;
+
+        if (config.GetValue<string>("AzureAppConfig:Endpoint") != null)
         {
             //middleware monitors the Azure AppConfig sentinel - a change triggers configuration refresh.
             //middleware triggers on http request, not background service scope
             app.UseAzureAppConfiguration();
         }
-
-        var config = app.Configuration;
 
         //serve sample html/js UI
         app.UseDefaultFiles();
@@ -45,7 +44,7 @@ public static partial class WebApplicationBuilderExtensions
         app.UseCors("AllowSpecific");
         app.UseAuthentication();
         app.UseAuthorization();
-        app.UseCorrelationId(); //internal service configuration - services.AddHttpClient().AddCorrelationIdForwarding();
+        app.UseCorrelationId(); //requres http client service configuration - services.AddHttpClient().AddCorrelationIdForwarding();
         app.UseHeaderPropagation();
 
         //any other middleware
@@ -53,15 +52,15 @@ public static partial class WebApplicationBuilderExtensions
 
         app.MapControllers();
         app.MapGrpcService<TodoGrpcService>();
-        app.MapHealthChecks("/health", new HealthCheckOptions()
+        app.MapHealthChecks("/_health", new HealthCheckOptions()
         {
             // Exclude all checks and return a 200 - Ok.
             Predicate = (_) => false,
         });
-        app.MapHealthChecks("/health/full", HealthCheckHelper.BuildHealthCheckOptions("full"));
-        app.MapHealthChecks("/health/db", HealthCheckHelper.BuildHealthCheckOptions("db"));
-        app.MapHealthChecks("/health/memory", HealthCheckHelper.BuildHealthCheckOptions("memory"));
-        app.MapHealthChecks("/health/weatherservice", HealthCheckHelper.BuildHealthCheckOptions("weatherservice"));
+        app.MapHealthChecks("/_health/full", HealthCheckHelper.BuildHealthCheckOptions("full"));
+        app.MapHealthChecks("/_health/db", HealthCheckHelper.BuildHealthCheckOptions("db"));
+        app.MapHealthChecks("/_health/memory", HealthCheckHelper.BuildHealthCheckOptions("memory"));
+        app.MapHealthChecks("/_health/weatherservice", HealthCheckHelper.BuildHealthCheckOptions("weatherservice"));
 
         if (config.GetValue("SwaggerSettings:Enable", false))
         {
@@ -76,7 +75,7 @@ public static partial class WebApplicationBuilderExtensions
                 {
                     o.PreSerializeFilters.Add((swaggerDoc, httpReq) =>
                     {
-                        swaggerDoc.Servers = new List<OpenApiServer> { new() { Url = $"{httpReq.Scheme}://{httpReq.Host.Value}" } };
+                        swaggerDoc.Servers = [new() { Url = $"{httpReq.Scheme}://{httpReq.Host.Value}" }];
                     });
                 }
             });
@@ -94,5 +93,4 @@ public static partial class WebApplicationBuilderExtensions
 
         return app;
     }
-
 }

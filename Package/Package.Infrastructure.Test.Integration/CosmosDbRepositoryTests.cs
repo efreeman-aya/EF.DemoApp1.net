@@ -1,8 +1,6 @@
-﻿using Domain.Shared.Enums;
-using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
+using Package.Infrastructure.Common.Contracts;
 using Package.Infrastructure.CosmosDb;
-using Package.Infrastructure.Data.Contracts;
 using Package.Infrastructure.Test.Integration.Cosmos;
 using Package.Infrastructure.Test.Integration.Model;
 using System.Linq.Expressions;
@@ -60,9 +58,7 @@ public class CosmosDbRepositoryTests : IntegrationTestBase
         {
             (todos, total, continuationToken) = await _repo.QueryPageProjectionAsync<TodoItemNoSql, TodoItemDto>(continuationToken, pageSize, filter, sorts, includeTotal);
             Assert.IsTrue(todos.Count > 0);
-#pragma warning disable S2589 // Boolean expressions should not be gratuitous - FALSE POSITIVE
             if (includeTotal) Assert.IsTrue(total > 0);
-#pragma warning restore S2589 // Boolean expressions should not be gratuitous
             includeTotal = false; //retrieve once, not repeatedly
         }
         while (continuationToken != null);

@@ -2,6 +2,8 @@
 using CorrelationId.DependencyInjection;
 using Infrastructure.Data;
 using Microsoft.ApplicationInsights.DependencyCollector;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Identity.Web;
 using Package.Infrastructure.AspNetCore.Swagger;
 using Package.Infrastructure.Grpc;
 using Sample.Api.ExceptionHandlers;
@@ -32,7 +34,7 @@ internal static class IServiceCollectionExtensions
             module.EnableSqlCommandTextInstrumentation = config.GetValue<bool>("EnableSqlCommandTextInstrumentation", false);
         });
 
-        //exception handling
+        //global unhandled exception handler
         services.AddExceptionHandler<DefaultExceptionHandler>();
 
         //api versioning
@@ -44,11 +46,15 @@ internal static class IServiceCollectionExtensions
             options.ApiVersionReader = new UrlSegmentApiVersionReader(); // /v1.1/context/method
         });
 
-        //header propagation
-        services.AddHeaderPropagation(); // (options => options.Headers.Add("x-username-etc"));
-
-        //convenient for model validation
-        services.AddProblemDetails();
+        //header propagation - implement here since integration testing breaks when there is no existing http request, so no headers to propagate
+        services.AddHeaderPropagation();
+        //.AddHeaderPropagation(options =>
+        //{
+        //    options.Headers.Add("x-request-id");
+        //    options.Headers.Add("x-correlation-id");
+        //    options.Headers.Add("x-username-etc");
+        //}); 
+        //.AddCorrelationIdForwarding();
 
         //https://github.com/stevejgordon/CorrelationId/wiki
         services.AddDefaultCorrelationId(options =>
@@ -67,7 +73,57 @@ internal static class IServiceCollectionExtensions
             });
         });
 
+        //app clients - Enable JWT Bearer Authentication
+        var configSection = config.GetSection("AzureAd");
+        if (configSection.Exists())
+        {
+            //https://learn.microsoft.com/en-us/entra/identity-platform/scenario-protected-web-api-app-configuration?tabs=aspnetcore
+            //https://learn.microsoft.com/en-us/entra/identity-platform/scenario-protected-web-api-verification-scope-app-roles?tabs=aspnetcore
+            services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                .AddMicrosoftIdentityWebApi(configSection)
+                //.AddJwtBearer(options =>
+                //{
+                //    var authority = $"{configSection.GetValue<string?>("Instance", null)}{configSection.GetValue<string?>("TenantId", null)}/";
+                //    var clientId = configSection.GetValue<string?>("ClientId", null);
+                //    options.Authority = $"{authority}/";
+                //    options.Audience = clientId; 
+                //    options.TokenValidationParameters = new TokenValidationParameters
+                //    {
+                //        ValidateIssuer = true,
+                //        ValidateAudience = true,
+                //        ValidateLifetime = true,
+                //        ValidateIssuerSigningKey = true,
+                //        ValidIssuer = $"{authority}/v2.0",
+                //        ValidAudience = clientId
+                //    };
+                //})
+                ;
+
+            //.AddMicrosoftIdentityWebApi(configSection, JwtBearerDefaults.AuthenticationScheme)
+            //.EnableTokenAcquisitionToCallDownstreamApi()
+            //.AddInMemoryTokenCaches()
+
+            //services.AddMicrosoftIdentityWebApiAuthentication(config, "AzureAd");
+            //services.AddAuthorizationBuilder()
+            //    .AddPolicy("Admin", policy => policy.RequireRole("Admin"))
+            //    .AddPolicy("SomeAccess1", policy => policy.RequireRole("SomeAccess1"));
+
+            services.AddAuthorization(options =>
+            {
+                options.AddPolicy("Admin", policy => policy.RequireRole("Admin"));
+                options.AddPolicy("SomeAccess1", policy => policy.RequireRole("SomeAccess1"));
+            });
+        }
+
         services.AddControllers();
+
+        //convenient for model validation
+        services.AddProblemDetails(options =>
+            options.CustomizeProblemDetails = ctx =>
+            {
+                ctx.ProblemDetails.Extensions.Add("machineName", Environment.MachineName);
+            }
+        );
 
         //Add gRPC framework services
         services.AddGrpc(options =>
@@ -94,10 +150,8 @@ internal static class IServiceCollectionExtensions
                 // can also be used to control the format of the API version in route templates
                 o.SubstituteApiVersionInUrl = true;
             });
-            // this enables binding ApiVersion as a endpoint callback parameter. if you don't use it, then
-            // you should remove this configuration.
+            // this enables binding ApiVersion as a endpoint callback parameter. if you don't use it, then remove this configuration.
             //.EnableApiVersionBinding();
-
 
             services.Configure<SwaggerSettings>(config.GetSection(SwaggerSettings.ConfigSectionName));
             services.AddTransient<IConfigureOptions<SwaggerGenOptions>, SwaggerGenConfigurationOptions>();
@@ -119,12 +173,16 @@ internal static class IServiceCollectionExtensions
         }
 
         //HealthChecks - having infrastructure references
+        //search nuget aspnetcore.healthchecks - many prebuilt health checks 
         //tag full will run when hitting health/full
+
         services.AddHealthChecks()
             .AddMemoryHealthCheck("memory", tags: healthCheckTagsFullMem, thresholdInBytes: config.GetValue<long>("MemoryHealthCheckBytesThreshold", 1024L * 1024L * 1024L))
             .AddDbContextCheck<TodoDbContextTrxn>("TodoDbContextTrxn", tags: healthCheckTagsFullDb)
             .AddDbContextCheck<TodoDbContextQuery>("TodoDbContextQuery", tags: healthCheckTagsFullDb)
             .AddCheck<WeatherServiceHealthCheck>("External Service", tags: healthCheckTagsFullExt);
+
+        //Todo - for http clients previously registered in infrastructure services, add header propagation here since it only applies at runtime when an http context is present
 
         return services;
     }
