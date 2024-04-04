@@ -15,7 +15,7 @@ namespace Package.Infrastructure.Data;
 
 /* 
     //add to migration class - customize for always encrypted (until supported in fluent syntax)
-    string url_AKV_CMK = "<url to keyvault key>";
+    string url_AKV_CMK =  Environment.GetEnvironmentVariable("AKVCMKURL"); //set in PMC
     string schema_table = "[todo].[TodoItem]";
     string cmkName = "CMK_WITH_AKV";
 
