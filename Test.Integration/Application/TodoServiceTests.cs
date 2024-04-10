@@ -35,6 +35,8 @@ public class TodoServiceTests : DbIntegrationTestBase
 
         await _bgTaskService!.StartAsync(new CancellationToken());
 
+        #region Arrange 
+
         //arrange - configure any test data for this test (optional, after snapshot)
         bool respawn = string.IsNullOrEmpty(DBSnapshotName);
         List<Action> seedFactories = [() => DbContext.SeedEntityData()];
@@ -47,6 +49,8 @@ public class TodoServiceTests : DbIntegrationTestBase
         //reset the DB with the seed scripts & data
         //existing sql db can reset db using snapshot created in ClassInitialize
         await ResetDatabaseAsync(respawn, DBSnapshotName, seedPaths, seedFactories);
+
+        #endregion
 
         string name = $"Entity a {Guid.NewGuid()}";
         TodoService svc = (TodoService)ServiceScope.ServiceProvider.GetRequiredService(typeof(ITodoService));
@@ -111,13 +115,15 @@ public class TodoServiceTests : DbIntegrationTestBase
     {
         Logger.InfoLog("Starting Todo_AddItem_fail");
 
-        //arrange
+        #region Arrange
 
         //arrange - configure any test data for this test (optional, after snapshot)
         bool respawn = string.IsNullOrEmpty(DBSnapshotName);
         List<Action> seedFactories = [() => DbContext.SeedEntityData()];
         List<string>? seedPaths = respawn ? [TestConfigSection.GetValue<string>("SeedFilePath")] : null; //can't duplicate snapshot data Ids
         await ResetDatabaseAsync(respawn, DBSnapshotName, seedPaths, seedFactories);
+
+        #endregion
 
         TodoService svc = (TodoService)ServiceScope.ServiceProvider.GetRequiredService(typeof(ITodoService));
         TodoItemDto? todo = new(Guid.Empty, name, TodoItemStatus.Created);
