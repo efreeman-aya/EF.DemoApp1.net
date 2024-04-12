@@ -1,11 +1,5 @@
 {
   "dependencies": {
-    "CustomConnector": {
-      "connectionInfo": "Custom Connector: EFSampleAppApi_Connector (Environment: Eben Freeman's Environment)",
-      "connectorName": "EFSampleAppApi_Connector",
-      "environmentUrl": "https://orge77f16ec.crm.dynamics.com/",
-      "environmentId": "a97c651b-ac84-e448-a9e1-dec27d857316",
-      "type": "powerplatform.local"
     }
   }
 }
