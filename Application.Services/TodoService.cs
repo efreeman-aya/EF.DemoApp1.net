@@ -1,8 +1,10 @@
 ﻿using Application.Contracts.Interfaces;
+using Application.Contracts.Mappers;
 using Application.Services.Logging;
+using EntityFramework.Exceptions.Common;
+using LanguageExt;
 using LanguageExt.Common;
 using Package.Infrastructure.BackgroundServices;
-using Package.Infrastructure.Common;
 using Package.Infrastructure.Common.Contracts;
 using Package.Infrastructure.Common.Exceptions;
 using Package.Infrastructure.Common.Extensions;
@@ -11,12 +13,10 @@ using AppConstants = Application.Contracts.Constants.Constants;
 
 namespace Application.Services;
 
-public class TodoService(ILogger<TodoService> logger, IOptionsMonitor<TodoServiceSettings> settings, IValidationHelper validationHelper,
-    ITodoRepositoryTrxn repoTrxn, ITodoRepositoryQuery repoQuery, ISampleApiRestClient sampleApiRestClient, IMapper mapper, IBackgroundTaskQueue taskQueue)
+public class TodoService(ILogger<TodoService> logger, IOptionsMonitor<TodoServiceSettings> settings,
+    ITodoRepositoryTrxn repoTrxn, ITodoRepositoryQuery repoQuery, ISampleApiRestClient sampleApiRestClient, IBackgroundTaskQueue taskQueue)
     : ServiceBase(logger), ITodoService
 {
-    //private readonly ILogger<TodoService> _logger = logger;
-
     public async Task<PagedResponse<TodoItemDto>> GetPageAsync(int pageSize = 10, int pageIndex = 0, CancellationToken cancellationToken = default)
     {
         //avoid compiler warning
@@ -26,56 +26,55 @@ public class TodoService(ILogger<TodoService> logger, IOptionsMonitor<TodoServic
         logger.InfoLog($"GetItemsAsync - pageSize:{pageSize} pageIndex:{pageIndex}");
 
         //return mapped domain -> app
-        return await repoQuery.QueryPageProjectionAsync<TodoItem, TodoItemDto>(mapper.ConfigurationProvider, true, pageSize, pageIndex,
+        return await repoQuery.QueryPageProjectionAsync(TodoItemMapper.Projector, true, pageSize, pageIndex,
             orderBy: t => t.OrderBy(x => x.Name),
             includeTotal: true, cancellationToken: cancellationToken);
     }
 
-    public async Task<TodoItemDto?> GetItemAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<Option<TodoItemDto>> GetItemAsync(Guid id, CancellationToken cancellationToken = default)
     {
         //performant logging
-        logger.InfoLog($"GetItemAsync - {id}");
+        logger.TodoItemGetById(id);
 
         var todo = await repoTrxn.GetEntityAsync<TodoItem>(filter: t => t.Id == id, cancellationToken: cancellationToken);
 
-        if (todo == null) return null;
-
-        //return mapped domain -> app
-        return mapper.Map<TodoItem, TodoItemDto>(todo);
+        return (todo == null)
+            ? Option<TodoItemDto>.None
+            : todo.ToDto();
     }
 
-    public async Task<Result<TodoItemDto?>> AddItemAsync(TodoItemDto dto, CancellationToken cancellationToken = default)
+    public async Task<Result<TodoItemDto>> CreateItemAsync(TodoItemDto dto, CancellationToken cancellationToken = default)
     {
-        //structured logging
-        logger.TodoItemCRUD("AddItemAsync Start", dto.SerializeToJson());
-
-        //dto - FluentValidation
-        var valResultDto = await validationHelper.ValidateAsync(dto, cancellationToken);
-        if (!valResultDto.IsValid)
-        {
-            var error = new ValidationException(string.Join(",", valResultDto.Errors.Select(e => e.ErrorMessage)));
-            return new Result<TodoItemDto?>(error);
-        }
-
         //map app -> domain
-        var todo = mapper.Map<TodoItemDto, TodoItem>(dto)!;
+        var todo = dto.ToEntity();
 
-        //domain entity - entity validation method
-        var valResultDomain = todo.Validate();
-        if (!valResultDomain.IsValid)
+        //domain entity validation 
+        var validationResult = todo.Validate();
+        if (!validationResult)
         {
-            var error = new ValidationException(string.Join(",", valResultDomain.Messages));
-            return new Result<TodoItemDto?>(error);
+            return new Result<TodoItemDto>(new ValidationException(validationResult.Messages));
         }
 
+        //structured logging
+        logger.TodoItemCRUD("AddItemAsync Start", todo.SerializeToJson());
+
+        //create; catch unique constraint exception
         repoTrxn.Create(ref todo);
-        await repoTrxn.SaveChangesAsync(OptimisticConcurrencyWinner.ClientWins, cancellationToken);
+        try
+        {
+            await repoTrxn.SaveChangesAsync(OptimisticConcurrencyWinner.ClientWins, cancellationToken);
+        }
+        catch (UniqueConstraintException ex)
+        {
+            return new Result<TodoItemDto>(ex); //name exists
+        }
 
         //queue some non-scoped work - fire and forget (notification)
         taskQueue.QueueBackgroundWorkItem(async cancellationToken =>
         {
             //await some work
-            await Task.Delay(200, cancellationToken);
+            //await Task.Delay(200, cancellationToken);
+            await Task.CompletedTask;
             logger.InfoLog($"Some non-scoped work done");
         });
 
@@ -83,31 +82,22 @@ public class TodoService(ILogger<TodoService> logger, IOptionsMonitor<TodoServic
         taskQueue.QueueScopedBackgroundWorkItem<ITodoRepositoryTrxn>(async (scopedRepositoryTrxn, cancellationToken) =>
         {
             //await some work
-            await Task.Delay(200, cancellationToken);
+            //await Task.Delay(200, cancellationToken);
+            await Task.CompletedTask;
             logger.InfoLog("Some scoped work done");
         }, cancellationToken: cancellationToken);
 
         logger.TodoItemCRUD("AddItemAsync Finish", todo.Id.ToString());
 
         //return mapped domain -> app
-        return mapper.Map<TodoItem, TodoItemDto>(todo)!;
+        return todo.ToDto();
     }
 
-    public async Task<Result<TodoItemDto?>> UpdateItemAsync(TodoItemDto dto, CancellationToken cancellationToken = default)
+    public async Task<Result<TodoItemDto>> UpdateItemAsync(TodoItemDto dto, CancellationToken cancellationToken = default)
     {
-        logger.TodoItemCRUD("UpdateItemAsync Start", dto.SerializeToJson());
-
-        //FluentValidation
-        var valResultDto = await validationHelper.ValidateAsync(dto, cancellationToken);
-        if (!valResultDto.IsValid)
-        {
-            var error = new ValidationException(string.Join(",", valResultDto.Errors.Select(e => e.ErrorMessage)));
-            return new Result<TodoItemDto?>(error);
-        }
-
         //retrieve existing
         var dbTodo = await repoTrxn.GetEntityAsync<TodoItem>(true, filter: t => t.Id == dto.Id, cancellationToken: cancellationToken);
-        if (dbTodo == null) return new Result<TodoItemDto?>(new NotFoundException($"{AppConstants.ERROR_ITEM_NOTFOUND}: {dto.Id}"));
+        if (dbTodo == null) return new Result<TodoItemDto>(new NotFoundException($"{AppConstants.ERROR_ITEM_NOTFOUND}: {dto.Id}"));
 
         //update
         dbTodo.SetName(dto.Name);
@@ -115,13 +105,29 @@ public class TodoService(ILogger<TodoService> logger, IOptionsMonitor<TodoServic
         dbTodo.SecureDeterministic = dto.SecureDeterministic;
         dbTodo.SecureRandom = dto.SecureRandom;
 
-        //_repoTrxn.UpdateFull(ref dbTodo); //update full record - only needed if not already tracked
-        await repoTrxn.SaveChangesAsync(OptimisticConcurrencyWinner.ClientWins, cancellationToken);
+        //domain entity validation 
+        var validationResult = dbTodo.Validate();
+        if (!validationResult)
+        {
+            return new Result<TodoItemDto>(new ValidationException(validationResult.Messages));
+        }
 
-        logger.TodoItemCRUD("UpdateItemAsync Complete", dbTodo.SerializeToJson());
+        logger.TodoItemCRUD("UpdateItemAsync Start", dbTodo.SerializeToJson());
+
+        //_repoTrxn.UpdateFull(ref dbTodo); //update full record - only needed if not already tracked
+        try
+        {
+            await repoTrxn.SaveChangesAsync(OptimisticConcurrencyWinner.ClientWins, cancellationToken);
+        }
+        catch (UniqueConstraintException ex)
+        {
+            return new Result<TodoItemDto>(ex); //name exists on another record
+        }
+
+        logger.TodoItemCRUD("UpdateItemAsync Complete", dbTodo.Id.ToString());
 
         //return mapped domain -> app 
-        return mapper.Map<TodoItemDto>(dbTodo);
+        return dbTodo.ToDto();
     }
 
     public async Task DeleteItemAsync(Guid id, CancellationToken cancellationToken = default)
@@ -140,7 +146,8 @@ public class TodoService(ILogger<TodoService> logger, IOptionsMonitor<TodoServic
         return await repoQuery.SearchTodoItemAsync(request, cancellationToken);
     }
 
-    public async Task<PagedResponse<TodoItemDto>> GetPageExternalAsync(int pageSize = 10, int pageIndex = 0, CancellationToken cancellationToken = default)
+    //external API call
+    public async Task<Result<PagedResponse<TodoItemDto>?>> GetPageExternalAsync(int pageSize = 10, int pageIndex = 0, CancellationToken cancellationToken = default)
     {
         logger.InfoLog($"GetPageExternalAsync - pageSize:{pageSize} pageIndex:{pageIndex}");
         return await sampleApiRestClient.GetPageAsync(pageSize, pageIndex, cancellationToken);

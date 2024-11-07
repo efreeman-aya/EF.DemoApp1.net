@@ -7,19 +7,18 @@ namespace Package.Infrastructure.Cache;
 /// <summary>
 /// 
 /// </summary>
-/// <param name="requestContext">holds TenantId for cache key</param>
+/// <param name="logger"></param>
 /// <param name="distCache"></param>
-public class DistributedCacheManager(ILogger<DistributedCacheManager> logger, DistributedCacheManagerOptions mOptions, IDistributedCache distCache)
+public class DistributedCacheManager(ILogger<DistributedCacheManager> logger, IDistributedCache distCache)
     : IDistributedCacheManager
 {
     private static readonly SemaphoreSlim _semaphore = new(1, 1);
 
     public async Task<T?> GetOrAddAsync<T>(string key, Func<Task<T>> factory, int cacheMinutes = 60,
-        bool forceRefresh = false, CancellationToken cancellationToken = default)
+        bool forceRefresh = false, CancellationToken cancellationToken = default) where T : class
     {
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(factory);
-        key = CacheUtility.BuildCacheKey<T>(key, mOptions.TenantId);
         if (forceRefresh) await distCache.RemoveAsync(key, cancellationToken);
         logger.DebugLog($"GetOrAddAsync - Cache key: {key}, forceRefresh:{forceRefresh}.");
 
@@ -57,7 +56,7 @@ public class DistributedCacheManager(ILogger<DistributedCacheManager> logger, Di
                 logger.DebugLog($"GetOrAddAsync {key} semaphore released.");
             }
         }
-        if (cacheItem == null)
+        if (cacheItem == default(T))
         {
             logger.InfoLog($"GetOrAddAsync {key} not found and factory returned null; returning default<T>.");
             return default;
@@ -68,9 +67,7 @@ public class DistributedCacheManager(ILogger<DistributedCacheManager> logger, Di
 
     public async Task RemoveAsync<T>(string key, CancellationToken cancellationToken = default)
     {
-        key = CacheUtility.BuildCacheKey<T>(key, mOptions.TenantId);
         logger.InfoLog($"RemoveAsync - Cache key: {key}.");
         await distCache.RemoveAsync(key, cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
     }
-
 }

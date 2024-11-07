@@ -4,6 +4,13 @@ using Package.Infrastructure.Data.Contracts;
 
 namespace Package.Infrastructure.Data;
 
+/// <summary>
+/// For detailed db exceptions, this library has been referenced: https://github.com/Giorgi/EntityFramework.Exceptions.Common
+/// The transaction DbContextPool also has a reference to https://github.com/Giorgi/EntityFramework.Exceptions.SqlServer and is registered with .UseExceptionProcessor()
+/// This allows for more detailed exceptions to be caught when saving changes in client code instead of investigating/parsing DBUpdateException inner exception details.
+/// https://github.com/Giorgi/EntityFramework.Exceptions/blob/main/EntityFramework.Exceptions.Common/Exceptions.cs
+/// </summary>
+/// <param name="options"></param>
 public abstract class DbContextBase(DbContextOptions options) : DbContext(options)
 {
     //OnConfiguring occurs last and can overwrite options obtained from DI or the constructor.
@@ -52,7 +59,7 @@ public abstract class DbContextBase(DbContextOptions options) : DbContext(option
                 foreach (var entry in ex.Entries)
                 {
                     var proposedValues = entry.CurrentValues;
-                    var dbValues = entry.GetDatabaseValues();
+                    var dbValues = await entry.GetDatabaseValuesAsync(cancellationToken);
                     _ = dbValues ?? throw new InvalidOperationException("DbUpdateConcurrencyException retry attempted to retieve DB values that returned null.");
 
                     foreach (var property in proposedValues.Properties)
@@ -89,7 +96,7 @@ public abstract class DbContextBase(DbContextOptions options) : DbContext(option
             }
         }
 
-        //basic entity row audit
+        //basic entity row audit;  Maybe outbox pattern as a better audit solution.
         foreach (var auditableEntity in ChangeTracker.Entries<IAuditable<TAuditIdType>>())
         {
             if (auditableEntity.State == EntityState.Added ||

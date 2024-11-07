@@ -1,6 +1,4 @@
-﻿using AutoMapper;
-using AutoMapper.QueryableExtensions;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Query;
 using Package.Infrastructure.Data.Contracts;
@@ -182,6 +180,86 @@ public static class EFExtensions
         return attach;
     }
 
+    /// <summary>
+    /// Audit helper method - Get all the changes for all the Modified entities in the context
+    /// </summary>
+    /// <param name="context"></param>
+    /// <returns></returns>
+    public static List<EntityChangeInfo> GetAllEntityChanges(this DbContext context)
+    {
+        var changes = new List<EntityChangeInfo>();
+
+        // Loop through all the tracked entities
+        foreach (var entry in context.ChangeTracker.Entries())
+        {
+            // Only process modified entities
+            if (entry.State == EntityState.Modified)
+            {
+                var entityChangeInfo = GetEntityChanges(entry);
+
+                if (entityChangeInfo.PropertyChanges.Count != 0)
+                {
+                    changes.Add(entityChangeInfo);
+                }
+            }
+        }
+
+        return changes;
+    }
+
+    //EntityEntry extensions
+
+    /// <summary>
+    /// Audit helper method - Get the changes for a specific entity
+    /// </summary>
+    /// <param name="entry"></param>
+    /// <returns></returns>
+    public static EntityChangeInfo GetEntityChanges(this EntityEntry entry, List<string>? maskedPropertyNames = null)
+    {
+        var entityChangeInfo = new EntityChangeInfo
+        {
+            EntityType = entry.Entity.GetType().Name,
+            KeyValues = entry.GetPrimaryKeyValues(),
+            PropertyChanges = []
+        };
+
+        foreach (var property in entry.Properties.Where(p => p.IsModified))
+        {
+            var masked = maskedPropertyNames?.Contains(property.Metadata.Name) ?? false;
+            entityChangeInfo.PropertyChanges.Add(new PropertyChangeInfo
+            {
+                PropertyName = property.Metadata.Name,
+                OriginalValue = masked ? "***" : property.OriginalValue,
+                NewValue = masked ? "***" : property.CurrentValue
+            });
+        }
+
+        return entityChangeInfo;
+    }
+
+    /// <summary>
+    /// Audit helper method - get the primary key values of an entity
+    /// </summary>
+    /// <param name="entry"></param>
+    /// <param name="whenNull">specify an optional default when key value is null</param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    public static Dictionary<string, object> GetPrimaryKeyValues(this EntityEntry entry, string? whenNull = null)
+    {
+        var keyValues = new Dictionary<string, object>();
+
+        entry.Metadata.FindPrimaryKey()?.Properties.ToList().ForEach(kName =>
+        {
+            if (kName != null)
+            {
+                keyValues.Add(kName.Name, entry.Property(kName.Name).CurrentValue ?? whenNull ?? throw new InvalidOperationException($"Primary key value for '{kName}' is null."));
+            }
+        });
+
+        return keyValues;
+    }
+
+
     //DbSet Extensions
 
     /// <summary>
@@ -314,7 +392,7 @@ public static class EFExtensions
     /// </summary>
     /// <typeparam name="T"></typeparam>
     /// <param name="query"></param>
-    /// <param name="tracking"></param>
+    /// <param name="projector">Projection Func</param>
     /// <param name="pageSize"></param>
     /// <param name="pageIndex">1-based</param>
     /// <param name="filter"></param>
@@ -325,17 +403,18 @@ public static class EFExtensions
     /// <param name="includes"></param>
     /// <returns>List<TProject> page results with total (-1 if includeTotal = false) </returns>
     public static async Task<(IReadOnlyList<TProject>, int)> QueryPageProjectionAsync<T, TProject>(this IQueryable<T> query,
-        IConfigurationProvider mapperConfigProvider,
+        Expression<Func<T, TProject>> projector,
         int? pageSize = null, int? pageIndex = null,
         Expression<Func<T, bool>>? filter = null,
-        Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null, bool includeTotal = false, bool splitQuery = false,
+        Func<IQueryable<T>, IOrderedQueryable<T>>? orderBy = null,
+        bool includeTotal = false, bool splitQuery = false,
         CancellationToken cancellationToken = default,
         params Func<IQueryable<T>, IIncludableQueryable<T, object?>>[] includes)
         where T : class
     {
         int total = includeTotal ? await query.ComposeIQueryable(filter: filter).CountAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None) : -1;
         query = query.ComposeIQueryable(false, pageSize, pageIndex, filter, orderBy, splitQuery, includes);
-        var results = await query.ProjectTo<TProject>(mapperConfigProvider).ToListAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
+        var results = await query.Select(projector).ToListAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.None);
         return (results.AsReadOnly(), total);
     }
 

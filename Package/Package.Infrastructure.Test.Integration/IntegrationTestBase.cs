@@ -4,6 +4,7 @@ using Azure.Identity;
 using Infrastructure.RapidApi.WeatherApi;
 using Microsoft.Azure.Cosmos.Fluent;
 using Microsoft.Extensions.Azure;
+using Microsoft.Extensions.Caching.StackExchangeRedis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -11,12 +12,16 @@ using Package.Infrastructure.BackgroundServices;
 using Package.Infrastructure.Cache;
 using Package.Infrastructure.Common.Contracts;
 using Package.Infrastructure.OpenAI.ChatApi;
+using Package.Infrastructure.AzureOpenAI.ChatApi;
 using Package.Infrastructure.Test.Integration.Blob;
 using Package.Infrastructure.Test.Integration.Cosmos;
 using Package.Infrastructure.Test.Integration.KeyVault;
 using Package.Infrastructure.Test.Integration.Messaging;
 using Package.Infrastructure.Test.Integration.Service;
 using Package.Infrastructure.Test.Integration.Table;
+using ZiggyCreatures.Caching.Fusion;
+using ZiggyCreatures.Caching.Fusion.Backplane.StackExchangeRedis;
+using Azure.AI.OpenAI;
 
 namespace Package.Infrastructure.Test.Integration;
 
@@ -82,7 +87,7 @@ public abstract class IntegrationTestBase
             configSection = Config.GetSection("EventGridPublisherTopic1");
             if (configSection.Exists())
             {
-                //Ideally use TopicEndpoint Uri (w/DefaultAzureCredential)
+                //Ideally use TopicEndpoint Uri only (DefaultAzureCredential defined above for all azure clients)
                 builder.AddEventGridPublisherClient(new Uri(configSection.GetValue<string>("TopicEndpoint")!),
                     new AzureKeyCredential(configSection.GetValue<string>("Key")!))
                 .WithName("EventGridPublisherTopic1");
@@ -101,6 +106,15 @@ public abstract class IntegrationTestBase
                 //wrapper for key vault sdks
                 services.Configure<KeyVaultManager1Settings>(configSection);
                 services.AddSingleton<IKeyVaultManager1, KeyVaultManager1>();
+            }
+
+            //Azure OpenAI
+            configSection = Config.GetSection(AzureOpenAI.ChatApi.ChatServiceSettings.ConfigSectionName);
+            if (configSection.Exists())
+            {
+                // Register a custom client factory since this client does not currently have a service registration method
+                builder.AddClient<AzureOpenAIClient, AzureOpenAIClientOptions>((options, _, _) => 
+                    new AzureOpenAIClient(new Uri(configSection.GetValue<string>("Url")!), new DefaultAzureCredential(), options));
             }
         });
 
@@ -148,34 +162,75 @@ public abstract class IntegrationTestBase
 
         //LazyCache.AspNetCore, lightweight wrapper around memorycache; prevent race conditions when multiple threads attempt to refresh empty cache item
         //https://github.com/alastairtree/LazyCache
-        services.AddLazyCache();
+        //services.AddLazyCache();
 
         //Redis distributed cache
         //cache providers - https://docs.microsoft.com/en-us/aspnet/core/performance/caching/distributed?view=aspnetcore-5.0#multiple-cache-providers
         //multiple redis instances requires a different pattern - https://stackoverflow.com/questions/71329765/how-to-use-multiple-implementations-of-microsoft-extensions-caching-stackexchang
-        connectionString = Config.GetConnectionString("Redis");
-        if (!string.IsNullOrEmpty(connectionString))
-        {
-            services.AddStackExchangeRedisCache(options =>
-            {
-                options.Configuration = connectionString;
-                options.InstanceName = "redis1";
-            });
-        }
-        else
-        {
-            services.AddDistributedMemoryCache(); //local server only, not distributed. Helps with tests
-        }
+        //connectionString = Config.GetConnectionString("Redis1");
+        //if (!string.IsNullOrEmpty(connectionString))
+        //{
+        //    services.AddStackExchangeRedisCache(options =>
+        //    {
+        //        options.Configuration = connectionString;
+        //        options.InstanceName = "redis1";
+        //    });
+        //}
+        //else
+        //{
+        //    services.AddDistributedMemoryCache(); //local server only, not distributed. Helps with tests
+        //}
 
         //distributed cache manager
-        services.AddScoped(provider =>
+        //services.AddScoped<IDistributedCacheManager, DistributedCacheManager>();
+
+
+        //FusionCache settings
+        List<CacheSettings> cacheSettings = [];
+        Config.GetSection("CacheSettings").Bind(cacheSettings);
+
+        //FusionCache supports multiple named instances with different default settings
+        foreach (var cacheInstance in cacheSettings)
         {
-            return new DistributedCacheManagerOptions
+            var fcBuilder = services.AddFusionCache(cacheInstance.Name)
+            .WithCysharpMemoryPackSerializer() //FusionCache supports several different serializers (different FusionCache nugets)
+            .WithCacheKeyPrefix($"{cacheInstance.Name}:")
+            .WithDefaultEntryOptions(new FusionCacheEntryOptions()
             {
-                TenantId = "SomeTenantId"
-            };
-        });
-        services.AddScoped<IDistributedCacheManager, DistributedCacheManager>();
+                //memory cache duration
+                Duration = TimeSpan.FromMinutes(cacheInstance.DurationMinutes),
+                //distributed cache duration
+                DistributedCacheDuration = TimeSpan.FromMinutes(cacheInstance.DistributedCacheDurationMinutes),
+                //how long to use expired cache value if the factory is unable to provide an updated value
+                FailSafeMaxDuration = TimeSpan.FromMinutes(cacheInstance.FailSafeMaxDurationMinutes),
+                //how long to wait before trying to get a new value from the factory after a fail-safe expiration
+                FailSafeThrottleDuration = TimeSpan.FromSeconds(cacheInstance.FailSafeThrottleDurationMinutes),
+                //allow some jitter in the Duration for variable expirations
+                JitterMaxDuration = TimeSpan.FromSeconds(10),
+                //factory timeout before returning stale value, if fail-safe is enabled and we have a stale value
+                FactorySoftTimeout = TimeSpan.FromSeconds(1),
+                //max allowed for factory even with no stale value to use; something may be wrong with the factory/service
+                FactoryHardTimeout = TimeSpan.FromSeconds(30),
+                //refresh active cache items upon cache retrieval, if getting close to expiration
+                EagerRefreshThreshold = 0.9f
+            });
+            //using redis for L2 distributed cache
+            if (!string.IsNullOrEmpty(cacheInstance.RedisName))
+            {
+                connectionString = Config.GetConnectionString(cacheInstance.RedisName);
+                fcBuilder
+                    .WithDistributedCache(new RedisCache(new RedisCacheOptions() { Configuration = connectionString }))
+                    //https://github.com/ZiggyCreatures/FusionCache/blob/main/docs/Backplane.md#-wire-format-versioning
+                    .WithBackplane(new RedisBackplane(new RedisBackplaneOptions
+                    {
+                        Configuration = connectionString,
+                        ConfigurationOptions = new StackExchange.Redis.ConfigurationOptions
+                        {
+                            ChannelPrefix = new StackExchange.Redis.RedisChannel(cacheInstance.BackplaneChannelName, StackExchange.Redis.RedisChannel.PatternMode.Auto)
+                        }
+                    }));
+            }
+        }
 
         //IRequestContext - injected into repositories, cache managers, etc
         services.AddScoped<IRequestContext<string>>(provider =>
@@ -203,11 +258,19 @@ public abstract class IntegrationTestBase
         }
 
         //OpenAI chat service
-        configSection = Config.GetSection(ChatServiceSettings.ConfigSectionName);
+        configSection = Config.GetSection(OpenAI.ChatApi.ChatServiceSettings.ConfigSectionName);
         if (configSection.Exists())
         {
-            services.AddTransient<IChatService, ChatService>();
-            services.Configure<ChatServiceSettings>(configSection);
+            services.AddTransient<OpenAI.ChatApi.IChatService, OpenAI.ChatApi.ChatService>();
+            services.Configure<OpenAI.ChatApi.ChatServiceSettings>(configSection);
+        }
+
+        //AzureOpenAI chat service
+        configSection = Config.GetSection(AzureOpenAI.ChatApi.ChatServiceSettings.ConfigSectionName);
+        if (configSection.Exists())
+        {
+            services.AddTransient<AzureOpenAI.ChatApi.IChatService, AzureOpenAI.ChatApi.ChatService>();
+            services.Configure<AzureOpenAI.ChatApi.ChatServiceSettings>(configSection);
         }
 
         //Sample scoped service for testing BackgroundTaskQueue.QueueScopedBackgroundWorkItem

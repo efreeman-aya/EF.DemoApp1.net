@@ -1,13 +1,17 @@
-﻿using Asp.Versioning;
+﻿using Application.Contracts.Model;
+using Asp.Versioning;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using CorrelationId.DependencyInjection;
+using FluentValidation;
 using Infrastructure.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Identity.Web;
-using Package.Infrastructure.AspNetCore.Swagger;
+using Package.Infrastructure.Auth.Handlers;
 using Package.Infrastructure.Grpc;
-using Sample.Api.ExceptionHandlers;
+using SampleApp.Api.ExceptionHandlers;
 using SampleApp.Bootstrapper.HealthChecks;
-using Swashbuckle.AspNetCore.SwaggerGen;
+using SampleApp.Support.Validators;
 
 namespace SampleApp.Api;
 
@@ -26,46 +30,19 @@ internal static class IServiceCollectionExtensions
     /// <returns></returns>
     public static IServiceCollection RegisterApiServices(this IServiceCollection services, IConfiguration config, ILogger logger)
     {
-        //Application Insights telemtry for http services (for logging telemetry directly to AI)
-        //var aiOptions = new ApplicationInsightsServiceOptions
-        //{
-        //    ConnectionString = config.GetValue<string>("ApplicationInsights:ConnectionString")
-        //};
-
-        //services.AddApplicationInsightsTelemetry(aiOptions)
-        //    .ConfigureTelemetryModule<DependencyTrackingTelemetryModule>((module, o) =>
-        //    {
-        //        module.EnableSqlCommandTextInstrumentation = config.GetValue("EnableSqlCommandTextInstrumentation", false);
-        //    });
-        services.AddApplicationInsightsTelemetry();
-
-        ////TelemetryConfiguration configuration = TelemetryConfiguration.CreateDefault();
-        ////configuration.ConnectionString = config.GetValue<string>("ApplicationInsights:ConnectionString");
-
-        //// Add OpenTelemetry Tracing
-        ////services.AddOpenTelemetryTracing((sp, builder) =>
-        ////{
-        ////    builder
-        ////        .AddAspNetCoreInstrumentation()
-        ////        .AddHttpClientInstrumentation()
-        ////        .AddNpgsqlInstrumentation()
-        ////        .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(Configuration["MicroserviceName"]))
-        ////        .AddAzureMonitorTraceExporter(config =>
-        ////        {
-        ////            config.ConnectionString = Configuration["ApplicationInsights:ConnectionString"];
-        ////        });
-        ////});
-
-        //global unhandled exception handler
-        services.AddExceptionHandler<DefaultExceptionHandler>();
+        //Application Insights telemetry for http services (for logging telemetry directly to AI)
+        services.AddOpenTelemetry().UseAzureMonitor(options =>
+        {
+            options.ConnectionString = config.GetValue<string>("ApplicationInsights:ConnectionString");
+        });
 
         //api versioning
         var apiVersioningBulder = services.AddApiVersioning(options =>
         {
-            options.DefaultApiVersion = new ApiVersion(1, 0);
+            options.DefaultApiVersion = new ApiVersion(1, 1);
             options.AssumeDefaultVersionWhenUnspecified = true;
-            options.ReportApiVersions = true;
-            options.ApiVersionReader = new UrlSegmentApiVersionReader(); // /v1.1/context/method
+            options.ReportApiVersions = true; //response header with supported versions
+            options.ApiVersionReader = new UrlSegmentApiVersionReader(); // /v1.1/context/method, can combine multiple versioning approaches
         });
 
         //header propagation - implement here since integration testing breaks when there is no existing http request, so no headers to propagate
@@ -95,33 +72,16 @@ internal static class IServiceCollectionExtensions
             });
         });
 
-        //app clients - Enable JWT Bearer Authentication
-        var configSection = config.GetSection("AzureAd");
+        //Auth
+        string configSectionName = "AzureAd";
+        var configSection = config.GetSection(configSectionName);
         if (configSection.Exists())
         {
-            //https://learn.microsoft.com/en-us/entra/identity-platform/scenario-protected-web-api-app-configuration?tabs=aspnetcore
             //https://learn.microsoft.com/en-us/entra/identity-platform/scenario-protected-web-api-verification-scope-app-roles?tabs=aspnetcore
-            //services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            //    .AddMicrosoftIdentityWebApi(configSection)
-            //    //.AddJwtBearer(options =>
-            //    //{
-            //    //    var authority = $"{configSection.GetValue<string?>("Instance", null)}{configSection.GetValue<string?>("TenantId", null)}/";
-            //    //    var clientId = configSection.GetValue<string?>("ClientId", null);
-            //    //    options.Authority = $"{authority}/";
-            //    //    options.Audience = clientId; 
-            //    //    options.TokenValidationParameters = new TokenValidationParameters
-            //    //    {
-            //    //        ValidateIssuer = true,
-            //    //        ValidateAudience = true,
-            //    //        ValidateLifetime = true,
-            //    //        ValidateIssuerSigningKey = true,
-            //    //        ValidIssuer = $"{authority}/v2.0",
-            //    //        ValidAudience = clientId
-            //    //    };
-            //    //})
-            //    ;
+            //https://andrewlock.net/setting-global-authorization-policies-using-the-defaultpolicy-and-the-fallbackpolicy-in-aspnet-core-3/
+            //https://learn.microsoft.com/en-us/entra/external-id/customers/tutorial-protect-web-api-dotnet-core-build-app
 
-            //services.AddMicrosoftIdentityWebApiAuthentication(config, "AzureAd");
+            logger.LogInformation("Configure auth - {ConfigSectionName}", configSectionName);
 
             services.AddAuthentication(options =>
             {
@@ -129,46 +89,49 @@ internal static class IServiceCollectionExtensions
             })
             .AddMicrosoftIdentityWebApi(config);
 
-            //.AddMicrosoftIdentityWebApi(configSection, JwtBearerDefaults.AuthenticationScheme)
-            //.EnableTokenAcquisitionToCallDownstreamApi()
+            //https://learn.microsoft.com/en-us/entra/identity-platform/scenario-web-api-call-api-app-configuration?tabs=aspnetcore
+            //.EnableTokenAcquisitionToCallDownstreamApi() 
             //.AddInMemoryTokenCaches()
 
-            //services.AddMicrosoftIdentityWebApiAuthentication(config, "AzureAd");
+            services.AddSingleton<IAuthorizationHandler, RolesOrScopesAuthorizationHandler>();
+
+            services.AddAuthorization();
 
             services.AddAuthorizationBuilder()
-                //require authenticated user globally
-                //.SetFallbackPolicy(new AuthorizationPolicyBuilder()
-                //    .RequireAuthenticatedUser()
-                //    .Build())
-                //.SetDefaultPolicy(new AuthorizationPolicyBuilder()
-                //    .RequireAuthenticatedUser()
-                //    .Build())
-                //require specific roles on spcific endpoints
+                //require authenticated user globally, except explicit [AllowAnonymous] endpoints  
+                //Fallback Policy for all endpoints that do not have any authorization defined, except explicit [AllowAnonymous] endpoints
+                .SetFallbackPolicy(new AuthorizationPolicyBuilder()
+                    .RequireAuthenticatedUser()
+                    .Build())
+                //Default Policy for all endpoints that require authorization ([Authorize] authenticated user) already but no other specifics
+                .SetDefaultPolicy(new AuthorizationPolicyBuilder()
+                    .RequireAuthenticatedUser()
+                    .Build())
+                //define specific roles/scopes policies
                 .AddPolicy("AdminPolicy", policy => policy.RequireRole("Admin"))
-                .AddPolicy("SomeAccess1Policy", policy => policy.RequireRole("SomeAccess1"))
+                .AddPolicy("SomeRolePolicy1", policy => policy.RequireRole("SomeAccess1"))
+                .AddPolicy("SomeScopePolicy1", policy => policy.RequireScope("SomeScope1"))
+                .AddPolicy("ScopeOrRolePolicy1", policy => policy.AddRequirements(new RolesOrScopesRequirement(["SomeAccess1"], ["SomeScope1"])))
+                .AddPolicy("ScopeOrRolePolicy2", policy =>
+                {
+                    var defaultRoles = configSection.GetSection("AppPermissions:Default").Get<string[]>();
+                    var defaultScopes = configSection.GetSection("Scopes:Default").Get<string[]>();
+                    policy.AddRequirements(new RolesOrScopesRequirement(defaultRoles, defaultScopes));
+                })
              ;
-
-            //services.AddAuthorization(options =>
-            //{
-            //    //require auth globally
-            //    options.FallbackPolicy = new AuthorizationPolicyBuilder()
-            //        .RequireAuthenticatedUser()
-            //        .Build();
-            //    //require auth for specific roles
-            //    options.AddPolicy("Admin", policy => policy.RequireRole("Admin"));
-            //    options.AddPolicy("SomeAccess1", policy => policy.RequireRole("SomeAccess1"));
-            //});
         }
+
+        //global unhandled exception handler
+        services.AddExceptionHandler<DefaultExceptionHandler>();
+
+        //if needed
+        //services.AddScoped<IValidatorDiscovery, ValidatorDiscovery>();
+        services.AddScoped<IValidator<TodoItemDto>, TodoItemDtoValidator>();
 
         services.AddControllers();
 
-        //convenient for model validation
-        services.AddProblemDetails(options =>
-            options.CustomizeProblemDetails = ctx =>
-            {
-                ctx.ProblemDetails.Extensions.Add("machineName", Environment.MachineName);
-            }
-        );
+        //convenient for model validation; built in IHostEnvironmentExtensions.BuildProblemDetailsResponse
+        services.AddProblemDetails();
 
         //Add gRPC framework services
         services.AddGrpc(options =>
@@ -181,9 +144,15 @@ internal static class IServiceCollectionExtensions
 
         services.AddRouting(options => options.LowercaseUrls = true);
 
-        if (config.GetValue("SwaggerSettings:Enable", false))
+        if (config.GetValue("OpenApiSettings:Enable", false))
         {
-            services.AddEndpointsApiExplorer();
+            //.net9
+            //https://learn.microsoft.com/en-us/aspnet/core/fundamentals/openapi/aspnetcore-openapi?view=aspnetcore-9.0&tabs=visual-studio%2Cminimal-apis
+            services
+                .AddOpenApi("v1")
+                .AddOpenApi("v1.1");
+
+            //services.AddEndpointsApiExplorer(); 
 
             apiVersioningBulder.AddApiExplorer(o =>
             {
@@ -197,12 +166,6 @@ internal static class IServiceCollectionExtensions
             });
             // this enables binding ApiVersion as a endpoint callback parameter. if you don't use it, then remove this configuration.
             //.EnableApiVersionBinding();
-
-            services.Configure<SwaggerSettings>(config.GetSection(SwaggerSettings.ConfigSectionName));
-            services.AddTransient<IConfigureOptions<SwaggerGenOptions>, SwaggerGenConfigurationOptions>();
-            //services.AddTransient<IConfigureOptions<SwaggerUIOptions>, SwaggerUIConfigurationOptions>();
-            var xmlCommentsFileName = config.GetValue<string>("SwaggerSettings:XmlCommentsFileName");
-            if (xmlCommentsFileName != null) services.AddSwaggerGen(o => SwaggerGenConfigurationOptions.AddSwaggerXmlComments(o, xmlCommentsFileName));
         }
 
         //ChatGPT plugin

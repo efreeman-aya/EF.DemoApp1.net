@@ -12,19 +12,17 @@ namespace Functions;
 public class FunctionStorageQueueTrigger(ILogger<FunctionStorageQueueTrigger> logger, IConfiguration configuration,
     IOptions<Settings1> settings)
 {
-    //private readonly ILogger<FunctionStorageQueueTrigger> _logger = loggerFactory.CreateLogger<FunctionStorageQueueTrigger>();
-
     [Function(nameof(FunctionStorageQueueTrigger))]
     public async Task Run([QueueTrigger("%StorageQueueName%", Connection = "StorageQueue1")] string queueItem)
     {
         _ = configuration.GetHashCode();
         _ = settings.GetHashCode();
 
-        logger.Log(LogLevel.Information, "StorageQueueTrigger - Start message: {queueItem}", queueItem);
+        logger.Log(LogLevel.Information, "StorageQueueTrigger - Start message: {QueueItem}", queueItem);
 
         //await some service call
         await Task.CompletedTask;
 
-        logger.Log(LogLevel.Information, "StorageQueueTrigger - Finish message: {queueItem}", queueItem);
+        logger.Log(LogLevel.Information, "StorageQueueTrigger - Finish message: {QueueItem}", queueItem);
     }
 }

@@ -1,5 +1,7 @@
 using Azure.Identity;
 using Microsoft.AspNetCore.DataProtection;
+using Package.Infrastructure.Common;
+using Package.Infrastructure.Host;
 using SampleApp.Api;
 using SampleApp.Bootstrapper;
 
@@ -9,32 +11,28 @@ using SampleApp.Bootstrapper;
 var builder = WebApplication.CreateBuilder(args);
 var appName = builder.Configuration.GetValue<string>("AppName");
 
-//logging for startup
-ILogger<Program> loggerStartup;
-using var loggerFactory = LoggerFactory.Create(logBuilder =>
+//static logger factory setup - for startup
+StaticLogging.CreateStaticLoggerFactory(logBuilder =>
 {
     logBuilder.SetMinimumLevel(LogLevel.Information);
-    logBuilder.AddConsole();
     logBuilder.AddApplicationInsights(configureTelemetryConfiguration: (config) =>
             config.ConnectionString = builder.Configuration.GetValue<string>("ApplicationInsights:ConnectionString"),
             configureApplicationInsightsLoggerOptions: (options) => { });
+    logBuilder.AddConsole();
 });
-loggerStartup = loggerFactory.CreateLogger<Program>();
+
+//startup logger
+ILogger<Program> loggerStartup = StaticLogging.CreateLogger<Program>();
 loggerStartup.LogInformation("{AppName} - Startup.", appName);
 
 try
 {
-    //logging
     loggerStartup.LogInformation("{AppName} - Configure app logging.", appName);
     builder.Logging
         .ClearProviders()
-        .AddApplicationInsights(configureTelemetryConfiguration: config =>
-        {
-            config.ConnectionString = builder.Configuration.GetValue<string>("ApplicationInsights:ConnectionString");
-        },
-        configureApplicationInsightsLoggerOptions: (options) => { }
-    );
-
+        .AddApplicationInsights(configureTelemetryConfiguration: (config) =>
+            config.ConnectionString = builder.Configuration.GetValue<string>("ApplicationInsights:ConnectionString"),
+            configureApplicationInsightsLoggerOptions: (options) => { });
     if (builder.Environment.IsDevelopment())
     {
         builder.Logging.AddConsole();
@@ -78,8 +76,6 @@ try
     //var connectionString = builder.Configuration.GetConnectionString("TodoDbContextQuery") ?? "";
     //builder.Configuration.AddDatabaseSource(connectionString, new TimeSpan(1, 0, 0));
 
-
-
     //Data Protection - use blobstorage (key file) and keyvault; server farm/instances will all use the same keys
     //register here since credential has been configured
     //https://learn.microsoft.com/en-us/aspnet/core/security/data-protection/configuration/overview
@@ -104,13 +100,30 @@ try
         .RegisterApplicationServices(config)
         //background services
         .RegisterBackgroundServices(config)
-        //api services - controllers, versioning, health checks, swagger, telemetry
+        //api services - controllers, versioning, health checks, openapidoc, telemetry
         .RegisterApiServices(config, loggerStartup);
 
     var app = builder.Build().ConfigurePipeline();
     loggerStartup.LogInformation("{AppName} - Running startup tasks.", appName);
     await app.RunStartupTasks();
+
+    //static logger factory setup - re-configure for application static logging
+    StaticLogging.CreateStaticLoggerFactory(logBuilder =>
+    {
+        logBuilder.SetMinimumLevel(LogLevel.Information);
+        logBuilder.ClearProviders();
+        logBuilder.AddApplicationInsights(configureTelemetryConfiguration: (config) =>
+                config.ConnectionString = builder.Configuration.GetValue<string>("ApplicationInsights:ConnectionString"),
+                configureApplicationInsightsLoggerOptions: (options) => { });
+        if (builder.Environment.IsDevelopment())
+        {
+            logBuilder.AddConsole();
+            logBuilder.AddDebug();
+        }
+    });
+
     loggerStartup.LogInformation("{AppName} - Running app.", appName);
+
     await app.RunAsync();
 }
 catch (Exception ex)

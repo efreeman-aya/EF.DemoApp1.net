@@ -1,12 +1,9 @@
 ﻿using Infrastructure.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Test.Support;
 
 namespace Test.Endpoints;
@@ -26,24 +23,32 @@ public class CustomApiFactory<TProgram>(string? dbConnectionString = null) : Web
 
         IConfiguration config = null!;
 
-        string env = builder.GetSetting("ASPNETCORE_ENVIRONMENT") ?? "Development"; // Utility.GetConfiguration().GetValue<string>("Environment", "Development")!;
+        string env = builder.GetSetting("ASPNETCORE_ENVIRONMENT") ?? "Development";
+
+        //var memorySettings = new Dictionary<string, string?>();
+        //if (dbConnectionString != null)
+        //{
+        //    memorySettings.Add("ConnectionStrings:TodoDbContextTrxn", dbConnectionString);
+        //    memorySettings.Add("ConnectionStrings:TodoDbContextQuery", dbConnectionString);
+        //}
+
         builder
             .UseEnvironment(env)
             .ConfigureAppConfiguration((hostingContext, configuration) =>
             {
+                //configuration.AddInMemoryCollection(memorySettings);
                 //override api settings with test settings
                 configuration.AddJsonFile(Path.Combine(Directory.GetCurrentDirectory(), "appsettings-test.json"));
                 config = configuration.Build();//get config for use here
             })
-            .ConfigureTestServices(services =>
+            .ConfigureServices(services =>
             {
                 //remove unneeded services
                 services.RemoveAll<IHostedService>();
 
-                var sp = services.BuildServiceProvider();
-                var logger = sp.GetRequiredService<ILogger<CustomApiFactory<TProgram>>>();
-
-                DbSupport.ConfigureServicesTestDB<TodoDbContextTrxn>(logger, services, dbConnectionString);
+                //swap the api database to the test database in Services collection
+                string dbName = config.GetValue<string>("TestSettings:DBName") ?? "Test.Endpoints.TestDB";
+                DbSupport.ConfigureServicesTestDB<TodoDbContextTrxn, TodoDbContextQuery>(services, dbConnectionString, dbName);
             });
     }
 }

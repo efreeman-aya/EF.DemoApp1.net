@@ -1,6 +1,7 @@
 ﻿using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
 using Domain.Model;
+using Package.Infrastructure.Common;
 
 namespace Test.Benchmarks;
 
@@ -17,11 +18,11 @@ public class TodoItemBenchmarks
     [IterationSetup]
     public void Setup()
     {
-        _todoItemDto = new TodoItem($"a{Support.Utility.RandomString(NameLength)}") { CreatedBy = "Test.Benchmarks" };
+        _todoItemDto = new TodoItem($"a{Support.Utility.RandomString(NameLength)}");
     }
 
     [Benchmark]
-    public bool TodoItemValidation()
+    public ValidationResult MethodTodoItemValidation()
     {
         return _todoItemDto.Validate();
     }

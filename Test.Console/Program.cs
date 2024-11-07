@@ -3,6 +3,8 @@ using Application.Contracts.Interfaces;
 using Domain.Shared.Enums;
 using Google.Protobuf.WellKnownTypes;
 using Infrastructure.SampleApi;
+using LanguageExt;
+using LanguageExt.Common;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -62,7 +64,7 @@ services.AddGrpcClient2<SampleAppGrpc.TodoService.TodoServiceClient>(
 
 //LazyCache needed for AzureAdTokenProviderDefaultAzureCred
 services.AddLazyCache();
-services.AddSingleton<IAzureAdTokenRetriever, AzureAdTokenProviderDefaultAzureCred>();
+services.AddSingleton<IAzureDefaultCredTokenProvider, AzureDefaultCredTokenProvider>();
 
 //build IServiceProvider for subsequent use finding / injecting services
 IServiceProvider serviceProvider = services.BuildServiceProvider(validateScopes: true);
@@ -91,7 +93,7 @@ while (true)
     {
         case "r-page":
             //REST
-            await AttemptRestAsync(() => restClient.GetPageAsync());
+            await AttemptResultAsync(() => restClient.GetPageAsync());
             break;
         case "g-page":
             //GRPC
@@ -110,7 +112,7 @@ while (true)
             if (command.Contains("r-"))
             {
                 //REST
-                await AttemptRestAsync(() => restClient.GetItemAsync(id));
+                await AttemptHttpAsync(() => restClient.GetItemAsync(id));
             }
             else
             {
@@ -134,8 +136,7 @@ while (true)
             if (command.Contains("r-"))
             {
                 //REST
-                //await AttemptRestAsync(() => restClient.SaveItemAsync(new SampleAppModel.TodoItemDto { Id = id, Name = input2 ?? Guid.NewGuid().ToString() }));
-                await AttemptRestAsync(() => restClient.SaveItemAsync(new SampleAppModel.TodoItemDto(id, input2 ?? Guid.NewGuid().ToString(), TodoItemStatus.Created)));
+                await AttemptResultAsync(() => restClient.SaveItemAsync(new SampleAppModel.TodoItemDto(id, input2 ?? Guid.NewGuid().ToString(), TodoItemStatus.Created)));
             }
             else
             {
@@ -146,7 +147,7 @@ while (true)
                     {
                         //setting NullableString - set only one property (Data or Isnull); setting both - the first is removed from the structure
                         Id = id == Guid.Empty ? new SampleAppGrpc.NullableString { Isnull = true } : new SampleAppGrpc.NullableString { Data = id.ToString() },
-                        Name = new SampleAppGrpc.NullableString { Data = input2 }
+                        Name = input2
                     }
                 }));
             }
@@ -165,7 +166,7 @@ while (true)
             if (command.Contains("r-"))
             {
                 //REST
-                await AttemptRestAsync(() => (Task<object>)restClient.DeleteItemAsync(id));
+                await AttemptHttpAsync(() => (Task<object?>)restClient.DeleteItemAsync(id));
             }
             else
             {
@@ -174,10 +175,10 @@ while (true)
             }
             break;
         case "r-getuser":
-            await AttemptRestAsync(() => restClient.GetUserAsync());
+            await AttemptHttpAsync(() => restClient.GetUserAsync());
             break;
         case "r-getuserclaims":
-            await AttemptRestAsync(() => restClient.GetUserClaimsAsync());
+            await AttemptHttpAsync(() => restClient.GetUserClaimsAsync());
             break;
         default:
             Console.WriteLine("Enter a valid command.");
@@ -186,7 +187,28 @@ while (true)
     }
 }
 
-async Task AttemptRestAsync<T>(Func<Task<T>> method)
+async Task AttemptResultAsync<T>(Func<Task<Result<T?>>> method) where T : class
+{
+    logger.InfoLog("REST Client initiate request");
+    Console.WriteLine("----------REST Client initiate request -----------");
+
+    try
+    {
+        var result = await method();
+        Console.WriteLine("----------REST Client handles response -----------");
+
+        _ = result.Match(
+            dto => { Console.WriteLine($"{dto.SerializeToJson()}"); return Unit.Default; },
+            err => { Console.WriteLine($"ERROR: {err.Message}"); return Unit.Default; }
+        );
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"ERROR: {ex.Message}");
+    }
+}
+
+async Task AttemptHttpAsync<T>(Func<Task<T?>> method) where T : class?
 {
     logger.InfoLog("REST Client initiate request");
     Console.WriteLine("----------REST Client initiate request -----------");
@@ -207,7 +229,7 @@ async Task AttemptRestAsync<T>(Func<Task<T>> method)
     }
 }
 
-async Task AttemptGrpcAsync<T>(Func<Task<T>> method)
+async Task AttemptGrpcAsync<T>(Func<Task<T>> method) where T : class
 {
     logger.InfoLog("REST Client initiate request");
     Console.WriteLine("----------GRPC Client initiate request -----------");

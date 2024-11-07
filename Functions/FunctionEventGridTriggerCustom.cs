@@ -27,21 +27,19 @@ namespace Functions;
 public class FunctionEventGridTriggerCustom(ILogger<FunctionEventGridTriggerCustom> logger, IConfiguration configuration,
     IOptions<Settings1> settings)
 {
-    //private readonly ILogger<FunctionEventGridTriggerCustom> _logger = loggerFactory.CreateLogger<FunctionEventGridTriggerCustom>();
-
     [Function(nameof(FunctionEventGridTriggerCustom))]
     public async Task Run([EventGridTrigger] EventGridEvent egEvent)
     {
         _ = configuration.GetHashCode();
         _ = settings.GetHashCode();
 
-        logger.Log(LogLevel.Information, "EventGridTriggerCustom - Start {inputEvent}", JsonSerializer.Serialize(egEvent));
+        logger.Log(LogLevel.Information, "EventGridTriggerCustom - Start {InputEvent}", JsonSerializer.Serialize(egEvent));
 
         _ = egEvent.Data?.ToString(); //extract from inputEvent  Encoding.UTF8.GetString(egEvent.Data);
 
         //await some service call
         await Task.CompletedTask;
 
-        logger.Log(LogLevel.Information, "EventGridTriggerCustom - Finish {inputEvent}", JsonSerializer.Serialize(egEvent));
+        logger.Log(LogLevel.Information, "EventGridTriggerCustom - Finish {InputEvent}", JsonSerializer.Serialize(egEvent));
     }
 }

@@ -1,4 +1,5 @@
-﻿using Package.Infrastructure.Common.Attributes;
+﻿using DeepCopy;
+using Package.Infrastructure.Common.Attributes;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -12,13 +13,15 @@ public static class SerializeExtensions
     /// <typeparam name="T"></typeparam>
     /// <param name="toSerialize"></param>
     /// <param name="options"></param>
-    /// <param name="applyMasks"></param>
+    /// <param name="applyMasks">Slower but helps hide sensitive data</param>
     /// <returns></returns>
     public static string? SerializeToJson<T>(this T toSerialize, JsonSerializerOptions? options = null, bool applyMasks = true)
+        where T : class
     {
         if (toSerialize == null) return null;
         if (!applyMasks) return JsonSerializer.Serialize(toSerialize, options);
 
+        //handling masks is slower
         MaskAttribute maskAttr;
 
         //check class for mask
@@ -39,21 +42,22 @@ public static class SerializeExtensions
         {
             string propMask;
             string? propVal;
-            var newT = DeserializeJson<T>(JsonSerializer.Serialize(toSerialize, options)); //Clone
+
+            T? cloneT = DeepCopier.Copy(toSerialize) ?? throw new InvalidOperationException("Deserialization failed or returned incorrect type."); // https://github.com/ReubenBond/DeepCopy
             foreach (var prop in maskedProps)
             {
-                propVal = prop.GetValue(newT)?.ToString();
+                propVal = prop.GetValue(cloneT)?.ToString();
                 if (propVal != null)
                 {
                     maskAttr = (MaskAttribute)Attribute.GetCustomAttribute(prop, typeof(MaskAttribute))!;
                     propMask = maskAttr.Mask;
                     if (maskAttr.MatchPattern == null)
-                        prop.SetValue(newT, propMask);
+                        prop.SetValue(cloneT, propMask);
                     else
-                        prop.SetValue(newT, Regex.Replace(propVal, maskAttr.MatchPattern, propMask));
+                        prop.SetValue(cloneT, Regex.Replace(propVal, maskAttr.MatchPattern, propMask));
                 }
             }
-            return JsonSerializer.Serialize(newT!, options);
+            return JsonSerializer.Serialize(cloneT!, options);
         }
 
         //there were no mask attributes
@@ -67,8 +71,9 @@ public static class SerializeExtensions
     /// <param name="toDeserialize"></param>
     /// <returns></returns>
     public static T? DeserializeJson<T>(this string toDeserialize, JsonSerializerOptions? options = null, bool throwOnNull = false)
+        where T : class
     {
-        T? val = JsonSerializer.Deserialize<T>(toDeserialize, options);
+        T? val = JsonSerializer.Deserialize<T?>(toDeserialize, options);
         if (val == null && throwOnNull) throw new InvalidOperationException($"JsonSerializer.Deserialize<T> returned null.");
         return val;
     }

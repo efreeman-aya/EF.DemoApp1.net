@@ -15,6 +15,7 @@ internal static class TodoLoadTest
     {
         using var httpClient = new HttpClient();
         httpClient.BaseAddress = new Uri(baseUrl);
+        string url = $"{baseUrl}/api1/v1.1/TodoItems";
 
         var scenario = Scenario.Create("todo-crud", async context =>
             {
@@ -22,22 +23,22 @@ internal static class TodoLoadTest
                 // for example: send http request, SQL query etc
                 // NBomber will measure how much time it takes to execute your logic
 
-                await Utility.RunStep<object, PagedResponse<TodoItemDto>>(context, httpClient, "getpage", HttpMethod.Get, $"{baseUrl}/api/v1.1/TodoItems");
-                await Utility.RunStep<TodoItemDto, TodoItemDto>(context, httpClient, "post", HttpMethod.Post, $"{baseUrl}/api/v1.1/TodoItems", null,
+                await Utility.RunStep<object, PagedResponse<TodoItemDto>>(context, httpClient, "getpage", HttpMethod.Get, url);
+                await Utility.RunStep<TodoItemDto, TodoItemDto>(context, httpClient, "post", HttpMethod.Post, url, null,
                     // assemble the payload for this step request 
                     (context) =>
                     {
                         var name = $"a{Guid.NewGuid()}";
                         return new TodoItemDto(null, name, TodoItemStatus.Created, name, name);
                     });
-                await Utility.RunStep<object, TodoItemDto>(context, httpClient, "get", HttpMethod.Get, $"{baseUrl}/api/v1.1/TodoItems",
+                await Utility.RunStep<object, TodoItemDto>(context, httpClient, "get", HttpMethod.Get, url,
                     //assemble the url for this step request using previous step response
                     (context) =>
                     {
                         var todoItem = (TodoItemDto)context.Data["post"];
                         return $"/{todoItem.Id}";
                     });
-                await Utility.RunStep<object, TodoItemDto>(context, httpClient, "put", HttpMethod.Put, $"{baseUrl}/api/v1.1/TodoItems",
+                await Utility.RunStep<object, TodoItemDto>(context, httpClient, "put", HttpMethod.Put, url,
                     //assemble the url for this step request using previous step response
                     (context) =>
                     {
@@ -59,14 +60,18 @@ internal static class TodoLoadTest
             //.WithLoadSimulations(Simulation.KeepConstant(copies: 1, during: TimeSpan.FromSeconds(10)));
 
             //normal load
-            .WithWarmUpDuration(TimeSpan.FromSeconds(20))
+            .WithWarmUpDuration(TimeSpan.FromSeconds(30))
             .WithLoadSimulations(
-                Simulation.RampingInject(rate: 5,
+
+                //first 30 seconds - ramp up from 0 to 10 VUs
+                Simulation.RampingInject(rate: 10,
                              interval: TimeSpan.FromSeconds(1),
                              during: TimeSpan.FromSeconds(30)),
+
+                //next 60 seconds - 10 VUs are injected every 1 second, for 60 seconds
                 Simulation.Inject(rate: 10,
                       interval: TimeSpan.FromSeconds(1),
-                      during: TimeSpan.FromSeconds(30))
+                      during: TimeSpan.FromSeconds(60))
             );
 
 

@@ -16,7 +16,7 @@ namespace Functions;
 ///     - begins with /blobServices/default/containers/<containername>
 ///     - ends with .txt
 /// debug local - https://docs.microsoft.com/en-us/azure/azure-functions/functions-debug-event-grid-trigger-local
-///     - ngrok (./ngrok http -host-header=localhost 7071), run local (enables initial azure validation webhook handshake)
+///     - VS Dev Tunnels or ngrok (./ngrok http -host-header=localhost 7071), run local (enables initial azure validation webhook handshake)
 ///     - in Azure create EventGrid subscription with webhook using VS Dev Tunnels or ngrok url (https://[tunnelurl]/runtime/webhooks/EventGrid?functionName=EventGridTriggerBlob
 ///     - this currently registers the subscription in Azure without normal http endpoint custom validation (as in a normal httpendpoint subscription like EventGridController)
 ///     - run test that creates event (upload blob)
@@ -29,8 +29,6 @@ namespace Functions;
 public class FunctionEventGridTriggerBlob(ILogger<FunctionEventGridTriggerBlob> logger, IConfiguration configuration,
     IOptions<Settings1> settings)
 {
-    //private readonly ILogger<FunctionEventGridTriggerBlob> _logger = loggerFactory.CreateLogger<FunctionEventGridTriggerBlob>();
-
     [Function(nameof(FunctionEventGridTriggerBlob))]
     public async Task Run([EventGridTrigger] EventGridEvent inputEvent)
     {
@@ -39,13 +37,13 @@ public class FunctionEventGridTriggerBlob(ILogger<FunctionEventGridTriggerBlob> 
 
         string? fileName = Path.GetFileName(inputEvent.Subject);
 
-        logger.Log(LogLevel.Information, "EventGridTriggerBlob - Start {fileName} {inputEvent}", fileName, JsonSerializer.Serialize(inputEvent));
+        logger.Log(LogLevel.Information, "EventGridTriggerBlob - Start {FileName} {InputEvent}", fileName, JsonSerializer.Serialize(inputEvent));
 
         _ = inputEvent.Data?.ToString(); //extract from inputEvent
 
         //await some service call
         await Task.CompletedTask;
 
-        logger.Log(LogLevel.Information, "EventGridTriggerBlob - Finish {fileName}", fileName);
+        logger.Log(LogLevel.Information, "EventGridTriggerBlob - Finish {FileName}", fileName);
     }
 }

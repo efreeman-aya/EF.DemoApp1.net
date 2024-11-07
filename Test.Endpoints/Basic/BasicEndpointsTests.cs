@@ -11,12 +11,14 @@ public class BasicEndpointsTests : EndpointTestBase
 {
     //html endpoints return success and correct content type
     [DataTestMethod]
-    [DataRow("swagger", HttpStatusCode.OK, "text/html; charset=utf-8")]
+    [DataRow("scalar/v1.1", HttpStatusCode.OK, "text/html; charset=utf-8")]
     [DataRow("index.html", HttpStatusCode.OK, "text/html")]
     public async Task Get_BasicEndpoints_pass(string url, HttpStatusCode expectedStatusCode, string contentType)
     {
+        var httpClient = await GetHttpClient();
+
         // Act
-        (HttpResponseMessage httpResponse, _) = await ApiHttpClient.HttpRequestAndResponseAsync<IHtmlDocument>(HttpMethod.Get, url, null);
+        (HttpResponseMessage httpResponse, _) = await httpClient.HttpRequestAndResponseAsync<IHtmlDocument>(HttpMethod.Get, url, null);
 
         // Assert
         httpResponse.EnsureSuccessStatusCode(); // Status Code 200-299
@@ -28,6 +30,7 @@ public class BasicEndpointsTests : EndpointTestBase
     public static async Task ClassInit(TestContext testContext)
     {
         Console.Write($"Start {testContext.TestName}");
+
         await ConfigureTestInstanceAsync(testContext.TestName!);
     }
 

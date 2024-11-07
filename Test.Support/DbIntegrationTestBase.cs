@@ -86,8 +86,21 @@ public abstract class DbIntegrationTestBase
         services.AddLogging(configure => configure.ClearProviders().AddConsole().AddDebug().AddApplicationInsights());
         _logger = services.BuildServiceProvider().GetRequiredService<ILogger<DbIntegrationTestBase>>();
 
-        //database
-        _dbContext = DbSupport.ConfigureServicesTestDB<TodoDbContextTrxn>(_logger, services, _dbConnectionString);
+        //database - swap registered for test db
+        string dbName = TestConfigSection.GetValue<string>("TestSettings:DBName") ?? "Test.Integration.TestDB";
+        DbSupport.ConfigureServicesTestDB<TodoDbContextTrxn, TodoDbContextQuery>(services, _dbConnectionString, dbName);
+
+        //scoped DbContext
+        //var scope = services.BuildServiceProvider().CreateScope();
+        //_dbContext = scope.ServiceProvider.GetRequiredService<TodoDbContextTrxn>();
+
+        //singleton DbContext
+        _dbContext = services.BuildServiceProvider().GetRequiredService<TodoDbContextTrxn>();
+
+        //Environment.SetEnvironmentVariable("AKVCMKURL", "");
+        //db.Database.Migrate(); //needs AKVCMKURL env var set
+        await _dbContext.Database.EnsureCreatedAsync(cancellationToken); //does not use migrations; uses DbContext to create tables
+
         if (!_dbContext.Database.IsInMemory())
         {
             //supports respawner
@@ -106,8 +119,7 @@ public abstract class DbIntegrationTestBase
         //build IServiceProvider for subsequent use finding/injecting services
         _services = services.BuildServiceProvider(validateScopes: true);
         _serviceScope = _services.CreateScope();
-        _logger.Log(LogLevel.Information, $"{_testContextName} Initialized.");
-
+        _logger.Log(LogLevel.Information, "{TestContextName} Initialized.", testContextName);
     }
 
     /// <summary>

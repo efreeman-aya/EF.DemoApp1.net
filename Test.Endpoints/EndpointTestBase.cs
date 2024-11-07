@@ -5,7 +5,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Package.Infrastructure.Data.Contracts;
-using Package.Infrastructure.Http.Tokens;
 using Respawn;
 using Respawn.Graph;
 using System.Data.Common;
@@ -31,40 +30,20 @@ public abstract class EndpointTestBase
     protected readonly static IConfigurationRoot Config = Utility.BuildConfiguration("appsettings-test.json").AddUserSecrets<Program>().Build();
     protected readonly static IConfigurationSection TestConfigSection = Config.GetSection("TestSettings");
 
-    protected readonly IAppCache _appcache;
-    protected readonly IOAuth2TokenProvider _tokenProvider;
+    protected static readonly IAppCache _appcache = new CachingService();
 
-    //needed for tests to call the in-memory api
-    protected HttpClient ApiHttpClient = null!;
+    //needed for tests to call the in-memory api; authenticated endpoints will need a bearer token
+    //protected static HttpClient HttpClientApi = null!;
 
-    protected EndpointTestBase()
+    protected static async Task<HttpClient> GetHttpClient()
     {
-        _appcache = new CachingService();
-        var options = new AzureADOptions
-        {
-            TenantId = Config.GetValue<Guid>("Auth:TenantId")!,
-            ClientId = Config.GetValue<string>("Auth:ClientId")!,
-            ClientSecret = Config.GetValue<string>("Auth:ClientSecret")!
-        };
-        _ = options.GetHashCode();
+        var scopes = Config.GetSection("SampleApiRestClientSettings:Scopes").Get<string[]>();
 
-        //no auth - not currently used
-        //_tokenProvider = new AzureAdTokenProvider(Options.Create(options), _appcache);
-        _tokenProvider = null!;
-
-        ApiHttpClient = ApiFactoryManager.GetClient<Program>(_testContextName);
-
-        //Authentication
-        //await ApplyBearerAuthHeader(ApiHttpClient);
-    }
-
-    //no auth - not currently used
-    protected async Task ApplyBearerAuthHeader(HttpClient client)
-    {
-        //scopes = new string[] { _azureAdOptions.Resource + ".default" };
-        var scopes = Config.GetValue("Auth:Scopes", new string[] { string.Empty })!;
-        var token = await _tokenProvider.GetAccessTokenAsync(scopes);
-        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        //handler takes care of auth
+        var handler = new SampleRestApiAuthMessageHandler(scopes!);
+        //var tokenResourceId = Config.GetValue<string?>("SampleApiRestClientSettings:ResourceId");
+        var httpClient = await ApiFactoryManager.GetClientAsync<Program>(_testContextName, dbConnectionString: _dbConnectionString, handlers: handler);
+        return httpClient;
     }
 
     public static async Task ConfigureTestInstanceAsync(string testContextName, CancellationToken cancellationToken = default)
@@ -82,7 +61,7 @@ public abstract class EndpointTestBase
         //Environment.SetEnvironmentVariable("AKVCMKURL", "");
         //db.Database.Migrate(); //needs AKVCMKURL env var set
         //cannot run parallel tests - this throws
-        _dbContext.Database.EnsureCreated(); //does not use migrations; uses DbContext to create tables
+        await _dbContext.Database.EnsureCreatedAsync(cancellationToken); //does not use migrations; uses DbContext to create tables
 
         if (!_dbContext.Database.IsInMemory())
         {
@@ -91,6 +70,9 @@ public abstract class EndpointTestBase
             await _dbConnection.OpenAsync(cancellationToken);
             await InitializeRespawner();
         }
+
+        //create the http client for the test to hit endpoints; this creates the WAF, in memory api, replaces services, so need the db connection string
+        //HttpClientApi = GetHttpClient(_dbConnectionString);
     }
 
     /// <summary>

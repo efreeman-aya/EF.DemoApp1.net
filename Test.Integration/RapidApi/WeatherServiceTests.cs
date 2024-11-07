@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Package.Infrastructure.Common.Extensions;
 
-namespace Test.Integration.Application;
+namespace Test.Integration.RapidApi;
 
 [Ignore("RapidApi (external weather service) credentials required in config settings.")]
 
@@ -49,7 +49,9 @@ public class WeatherServiceTests
         _logger.InfoLog("GetCurrentAsync_pass - Start");
 
         //act
-        var weather = await _svc.GetCurrentAsync("San Diego, CA");
+        var weather = (await _svc.GetCurrentAsync("San Diego, CA")).Match(
+            Succ: response => response,
+            Fail: err => throw err);
 
         //assert 
         Assert.IsNotNull(weather);
@@ -63,12 +65,17 @@ public class WeatherServiceTests
         _logger.InfoLog("GetForecastAsync_pass - Start");
 
         //act
-        var weather = await _svc.GetForecastAsync("San Diego, CA", 3);
-        var weather2 = await _svc.GetCurrentAsync("Paris, France");
+        var weather = (await _svc.GetForecastAsync("San Diego, CA", 3)).Match(
+            Succ: response => response,
+            Fail: err => throw err);
+        Assert.IsNotNull(weather);
+
+        var forecast = (await _svc.GetCurrentAsync("Paris, France")).Match(
+            Succ: response => response,
+            Fail: err => throw err);
 
         //assert 
-        Assert.IsNotNull(weather);
-        Assert.IsNotNull(weather2);
+        Assert.IsNotNull(forecast);
 
         _logger.InfoLog($"GetForecastAsync_pass - Complete: {weather.SerializeToJson()}");
     }

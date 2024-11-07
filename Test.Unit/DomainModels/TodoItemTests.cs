@@ -1,6 +1,5 @@
 using Domain.Model;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Package.Infrastructure.Common.Exceptions;
 
 namespace Test.Unit.DomainModels;
 
@@ -8,24 +7,17 @@ namespace Test.Unit.DomainModels;
 public class TodoItemTests
 {
     [DataTestMethod]
-    [DataRow("asdfg")]
-    [DataRow("sdfgsd4a56yrt")]
-    public void Validate_Success(string name)
+    [DataRow("asdfg", true)]
+    [DataRow("sdfgsd4a56yrt", true)]
+    [DataRow(null, false)]
+    [DataRow("sdfg", false)]
+    [DataRow("sdfgsd456yrt", false)]
+    [DataRow("sdfhy56u7g", false)]
+    [DataRow("aafg", false)]
+    public void Validate_IsValid(string name, bool isValid)
     {
-        var item = new TodoItem(name) { CreatedBy = "Test.Unit" };
+        var item = new TodoItem(name);
         var response = item.Validate();
-        Assert.IsTrue(response.IsValid);
-    }
-
-    [DataTestMethod]
-    [DataRow(null)]
-    [DataRow("sdfg")]
-    [DataRow("sdfgsd456yrt")]
-    [DataRow("sdfhy56u7g")]
-    [DataRow("aafg")]
-    [ExpectedException(typeof(ValidationException))]
-    public void Validate_Throws(string name)
-    {
-        _ = new TodoItem(name) { CreatedBy = "Test.Unit" };
+        Assert.AreEqual(isValid, response);
     }
 }

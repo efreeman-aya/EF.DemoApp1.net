@@ -19,24 +19,24 @@ public class RulesBenchmarks
     [IterationSetup]
     public void Setup()
     {
-        _todoItemDto = new TodoItem($"a{Support.Utility.RandomString(NameLength)}") { CreatedBy = "Test.Benchmarks" };
+        _todoItemDto = new TodoItem($"a{Support.Utility.RandomString(NameLength)}");
         _regexMatch = $"{_todoItemDto.Name[..1]}.*{_todoItemDto.Name[^3..]}";
     }
 
     [Benchmark]
-    public bool TodoNameLengthRule()
+    public bool RuleTodoNameLengthRule()
     {
         return new TodoNameLengthRule(NameLength).IsSatisfiedBy(_todoItemDto);
     }
 
     [Benchmark]
-    public bool TodoNameRegexRule()
+    public bool RuleTodoNameRegexRule()
     {
         return new TodoNameRegexRule(_regexMatch).IsSatisfiedBy(_todoItemDto);
     }
 
     [Benchmark]
-    public bool CompositeRule()
+    public bool RuleCompositeRule()
     {
         return new TodoCompositeRule(NameLength, _regexMatch).IsSatisfiedBy(_todoItemDto);
     }
