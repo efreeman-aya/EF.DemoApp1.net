@@ -43,14 +43,18 @@ td {
 }
 
 .spinner {
-    margin-left: 20px;
+    /*margin-left: 20px;
     border: 5px solid #6d08ff;
     border-top: 5px solid #87a7ff;
     border-bottom: 5px solid #87a7ff;
     border-radius: 50%;
     width: 25px;
     height: 25px;
-    animation: spin 1s linear infinite;
+    animation: spin 1s linear infinite;*/
+    /*svg spinner*/
+    height: 35px;
+    margin-top: -4px;
+    width: 35px;
 }
 
 #pagination {
@@ -80,6 +84,76 @@ td {
     #pageSizeSelect:focus {
         outline: none;
     }
+
+/* chat */
+#chat-container {
+    width: 100%;
+    max-width: 1000px;
+    height: calc(100vh - 200px);
+}
+
+#chat-output {
+    height: 100%; /* Fixed height for the scrolling window */
+    border: 1px solid #ccc; /* Optional: Add a border */
+    border-radius: 8px; /* Optional: Rounded corners */
+    overflow-y: scroll; /* Enable vertical scrolling */
+    background-color: #333; /* Background color */
+    scroll-behavior: smooth;
+}
+
+    #chat-output .message:has(.spinner) {
+        margin-top: 20px;
+    }
+
+#chat-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    text-align: right;
+    margin: 10px 2px;
+}
+
+    #chat-controls input {
+        flex: 1;
+        min-width: 0;
+        font-size: 1.2em;
+        border-radius: 10px;
+        border: 2px solid #005656;
+        padding: 4px;
+    }
+
+    #chat-controls button {
+        font-size: 1.2em;
+        border-radius: 10px;
+        border: 2px solid #005656;
+        padding: 2px;
+    }
+
+.disabled {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+.message {
+    margin: 2px; /* Spacing between messages */
+    padding: 8px;
+    border-radius: 10px; /* Rounded corners for each message */
+}
+
+.message-user {
+    float: right;
+    color: cyan;
+    border: 2px solid cyan;
+    background-color: #001f1f;
+}
+
+.message-system {
+    clear: both;
+    color: orange;
+    border: 2px solid orange;
+    background-color: #120c00;
+}
+
 
 @keyframes spin {
     0% {

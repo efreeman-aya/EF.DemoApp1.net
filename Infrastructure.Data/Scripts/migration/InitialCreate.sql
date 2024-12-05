@@ -9,20 +9,17 @@ END;
 GO
 
 BEGIN TRANSACTION;
-GO
-
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     IF SCHEMA_ID(N'todo') IS NULL EXEC(N'CREATE SCHEMA [todo];');
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     CREATE TABLE [todo].[SystemSetting] (
@@ -38,11 +35,10 @@ BEGIN
         CONSTRAINT [PK_SystemSetting] PRIMARY KEY NONCLUSTERED ([Id])
     );
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     CREATE TABLE [todo].[TodoItem] (
@@ -53,36 +49,29 @@ BEGIN
         [SecureDeterministic] varbinary(200) NULL,
         [IsDeleted] bit NOT NULL,
         [RowVersion] rowversion NULL,
-        [CreatedDate] datetime2(0) NOT NULL,
-        [CreatedBy] nvarchar(100) NOT NULL,
-        [UpdatedDate] datetime2(0) NULL,
-        [UpdatedBy] nvarchar(100) NULL,
         CONSTRAINT [PK_TodoItem] PRIMARY KEY NONCLUSTERED ([Id])
     );
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     CREATE UNIQUE CLUSTERED INDEX [IX_SystemSetting_Key] ON [todo].[SystemSetting] ([Key]);
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     CREATE UNIQUE CLUSTERED INDEX [IX_TodoItem_Name] ON [todo].[TodoItem] ([Name]);
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
 
@@ -101,11 +90,10 @@ BEGIN
     END
 
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
 
@@ -123,11 +111,10 @@ BEGIN
         SELECT 'COLUMN ENCRYPTION KEY [CEK_WITH_AKV] exists.';
     END
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     ALTER TABLE [todo].[TodoItem]
@@ -137,11 +124,10 @@ BEGIN
                                             ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256', 
                                             COLUMN_ENCRYPTION_KEY = [CEK_WITH_AKV]) NULL
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     ALTER TABLE [todo].[TodoItem]
@@ -151,17 +137,15 @@ BEGIN
                                             ALGORITHM = 'AEAD_AES_256_CBC_HMAC_SHA_256', 
                                             COLUMN_ENCRYPTION_KEY = [CEK_WITH_AKV]) NULL
 END;
-GO
 
 IF NOT EXISTS (
     SELECT * FROM [__EFMigrationsHistory]
-    WHERE [MigrationId] = N'20240411195536_InitialCreate'
+    WHERE [MigrationId] = N'20241202164906_InitialCreate'
 )
 BEGIN
     INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
-    VALUES (N'20240411195536_InitialCreate', N'8.0.4');
+    VALUES (N'20241202164906_InitialCreate', N'9.0.0');
 END;
-GO
 
 COMMIT;
 GO

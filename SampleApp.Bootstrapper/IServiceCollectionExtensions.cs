@@ -2,7 +2,9 @@
 using Application.Contracts.Services;
 using Application.MessageHandlers;
 using Application.Services;
+using Application.Services.JobChat;
 using Azure;
+using Azure.AI.OpenAI;
 using Azure.Identity;
 using CorrelationId.Abstractions;
 using CorrelationId.HttpClient;
@@ -10,6 +12,7 @@ using EntityFramework.Exceptions.SqlServer;
 using FluentValidation;
 using Infrastructure.Data;
 using Infrastructure.Data.Interceptors;
+using Infrastructure.JobsApi;
 using Infrastructure.RapidApi.WeatherApi;
 using Infrastructure.Repositories;
 using Infrastructure.SampleApi;
@@ -19,6 +22,7 @@ using Microsoft.Data.SqlClient.AlwaysEncrypted.AzureKeyVaultProvider;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Azure;
+using Microsoft.Extensions.Caching.StackExchangeRedis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -26,8 +30,8 @@ using Microsoft.Extensions.Http.Resilience;
 using Package.Infrastructure.AspNetCore.Chaos;
 using Package.Infrastructure.BackgroundServices;
 using Package.Infrastructure.BackgroundServices.InternalMessageBroker;
+using Package.Infrastructure.Cache;
 using Package.Infrastructure.Common.Contracts;
-//using Package.Infrastructure.OpenAI.ChatApi;
 using Polly;
 using Polly.Simmy;
 using Polly.Simmy.Fault;
@@ -35,7 +39,10 @@ using Polly.Simmy.Latency;
 using Polly.Simmy.Outcomes;
 using SampleApp.BackgroundServices.Scheduler;
 using SampleApp.Bootstrapper.StartupTasks;
+using StackExchange.Redis;
 using System.Security.Claims;
+using ZiggyCreatures.Caching.Fusion;
+using ZiggyCreatures.Caching.Fusion.Backplane.StackExchangeRedis;
 
 namespace SampleApp.Bootstrapper;
 
@@ -62,6 +69,9 @@ public static class IServiceCollectionExtensions
         services.AddScoped<ITodoService, TodoService>();
         services.Configure<TodoServiceSettings>(config.GetSection(TodoServiceSettings.ConfigSectionName));
 
+        services.AddScoped<IJobChatOrchestrator, JobChatOrchestrator>();
+        services.Configure<JobChatOrchestratorSettings>(config.GetSection(JobChatOrchestratorSettings.ConfigSectionName));
+
         return services;
     }
 
@@ -77,20 +87,92 @@ public static class IServiceCollectionExtensions
             services.AddAzureAppConfiguration();
         }
 
+        //not needed when using FusionCache or .net HybridCache
         //LazyCache.AspNetCore, lightweight wrapper around memorycache; prevent race conditions when multiple threads attempt to refresh empty cache item
         //https://github.com/alastairtree/LazyCache
-        services.AddLazyCache();
+        //services.AddLazyCache();
 
         //FusionCache - https://www.nuget.org/packages/ZiggyCreatures.FusionCache
-        //services.AddFusionCache();
+        List<CacheSettings> cacheSettings = [];
+        config.GetSection("CacheSettings").Bind(cacheSettings);
+
+        //FusionCache supports multiple named instances with different default settings
+        foreach (var cacheInstance in cacheSettings)
+        {
+            var fcBuilder = services.AddFusionCache(cacheInstance.Name)
+            .WithCysharpMemoryPackSerializer() //FusionCache supports several different serializers (different FusionCache nugets)
+            .WithCacheKeyPrefix($"{cacheInstance.Name}:")
+            .WithDefaultEntryOptions(new FusionCacheEntryOptions()
+            {
+                //memory cache duration
+                Duration = TimeSpan.FromMinutes(cacheInstance.DurationMinutes),
+                //distributed cache duration
+                DistributedCacheDuration = TimeSpan.FromMinutes(cacheInstance.DistributedCacheDurationMinutes),
+                //how long to use expired cache value if the factory is unable to provide an updated value
+                FailSafeMaxDuration = TimeSpan.FromMinutes(cacheInstance.FailSafeMaxDurationMinutes),
+                //how long to wait before trying to get a new value from the factory after a fail-safe expiration
+                FailSafeThrottleDuration = TimeSpan.FromSeconds(cacheInstance.FailSafeThrottleDurationMinutes),
+                //allow some jitter in the Duration for variable expirations
+                JitterMaxDuration = TimeSpan.FromSeconds(10),
+                //factory timeout before returning stale value, if fail-safe is enabled and we have a stale value
+                FactorySoftTimeout = TimeSpan.FromSeconds(1),
+                //max allowed for factory even with no stale value to use; something may be wrong with the factory/service
+                FactoryHardTimeout = TimeSpan.FromSeconds(30),
+                //refresh active cache items upon cache retrieval, if getting close to expiration
+                EagerRefreshThreshold = 0.9f
+            });
+
+            //using redis for L2 distributed cache & backplane
+            //ZiggyCreatures.Caching.Fusion.Backplane.StackExchangeRedis
+            //https://github.com/ZiggyCreatures/FusionCache/blob/main/docs/Backplane.md#-wire-format-versioning
+            //https://markmcgookin.com/2020/01/15/azure-redis-cache-no-endpoints-specified-error-in-dotnet-core/
+
+            RedisConfiguration redisConfiguration = new();
+            if (cacheInstance.RedisConfigurationSection != null)
+            {
+                config.GetSection(cacheInstance.RedisConfigurationSection).Bind(redisConfiguration);
+                var redisConfigurationOptions = new ConfigurationOptions
+                {
+                    EndPoints = {
+                            {
+                                redisConfiguration.EndpointUrl,
+                                redisConfiguration.Port
+                            }
+                        },
+                    Password = redisConfiguration.Password,
+                    Ssl = true,
+                    AbortOnConnectFail = false,
+                    ChannelPrefix = new RedisChannel(cacheInstance.BackplaneChannelName, RedisChannel.PatternMode.Auto)
+                };
+
+                //var redisFCConnectionString = config.GetConnectionString(cacheInstance.RedisConfigurationSection);
+                //var redisConfigurationOptions = ConfigurationOptions.Parse(redisFCConnectionString!);
+                //    .ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential()); //configure redis with managed identity
+
+
+                //var connectionString = config.GetConnectionString(cacheInstance.RedisName);
+                fcBuilder
+                    .WithDistributedCache(new RedisCache(new RedisCacheOptions()
+                    {
+                        //Configuration = connectionString,  
+                        ConfigurationOptions = redisConfigurationOptions
+                    }))
+
+                    .WithBackplane(new RedisBackplane(new RedisBackplaneOptions
+                    {
+                        //Configuration = connectionString,
+                        ConfigurationOptions = redisConfigurationOptions
+                    }));
+            }
+        }
 
         //https://docs.microsoft.com/en-us/aspnet/core/performance/caching/distributed
-        string? connectionString = config.GetConnectionString("Redis1");
-        if (!string.IsNullOrEmpty(connectionString))
+        var redisConnectionString = config.GetConnectionString("Redis1");
+        if (!string.IsNullOrEmpty(redisConnectionString))
         {
             services.AddStackExchangeRedisCache(options =>
             {
-                options.Configuration = connectionString;
+                options.Configuration = redisConnectionString;
                 options.InstanceName = "redis1";
             });
         }
@@ -147,22 +229,24 @@ public static class IServiceCollectionExtensions
         services.AddScoped<ITodoRepositoryTrxn, TodoRepositoryTrxn>();
         services.AddScoped<ITodoRepositoryQuery, TodoRepositoryQuery>();
 
+        services.AddScoped<AuditInterceptor>();
+
         //Database 
-        connectionString = config.GetConnectionString("TodoDbContextTrxn");
-        if (string.IsNullOrEmpty(connectionString) || connectionString == "UseInMemoryDatabase")
+        var trxnDBconnectionString = config.GetConnectionString("TodoDbContextTrxn");
+        if (string.IsNullOrEmpty(trxnDBconnectionString) || trxnDBconnectionString == "UseInMemoryDatabase")
         {
             //multiple in memory DbContexts use the same DB
             //InMemory for dev; requires Microsoft.EntityFrameworkCore.InMemory
             var inMemoryDatabaseRoot = new InMemoryDatabaseRoot();
 
-            services//.AddEntityFrameworkInMemoryDatabase()
+            services
                 .AddDbContext<TodoDbContextTrxn>((sp, opt) =>
                 {
-                    var auditInterceptor = new AuditInterceptor(sp.GetRequiredService<IRequestContext<string>>(), sp.GetRequiredService<IInternalBroker>());
+                    var auditInterceptor = sp.GetRequiredService<AuditInterceptor>();
                     opt.UseInMemoryDatabase("TodoDbContext", inMemoryDatabaseRoot).AddInterceptors(auditInterceptor);
                 });
 
-            services//.AddEntityFrameworkInMemoryDatabase()
+            services
                 .AddDbContext<TodoDbContextQuery>((sp, opt) =>
                     opt.UseInMemoryDatabase("TodoDbContext", inMemoryDatabaseRoot));
         }
@@ -170,10 +254,11 @@ public static class IServiceCollectionExtensions
         {
             //consider a pooled factory - https://learn.microsoft.com/en-us/ef/core/performance/advanced-performance-topics?tabs=with-di%2Cexpression-api-with-constant#dbcontext-pooling
 
-            services.AddDbContextPool<TodoDbContextTrxn>((sp, options) =>
+            //sp is not scoped for the DbContextPool, so we can't use it to get the auditInterceptor
+            services.AddDbContext<TodoDbContextTrxn>((sp, options) =>
             {
-                var auditInterceptor = new AuditInterceptor(sp.GetRequiredService<IRequestContext<string>>(), sp.GetRequiredService<IInternalBroker>());
-                options.UseSqlServer(connectionString,
+                var auditInterceptor = sp.GetRequiredService<AuditInterceptor>();
+                options.UseSqlServer(trxnDBconnectionString,
                     //retry strategy does not support user initiated transactions 
                     sqlServerOptionsAction: sqlOptions =>
                     {
@@ -186,9 +271,9 @@ public static class IServiceCollectionExtensions
                     .AddInterceptors(auditInterceptor);
             });
 
-            connectionString = config.GetConnectionString("TodoDbContextQuery");
-            services.AddDbContextPool<TodoDbContextQuery>(options =>
-                options.UseSqlServer(connectionString,
+            var queryDBconnectionString = config.GetConnectionString("TodoDbContextQuery");
+            services.AddDbContext<TodoDbContextQuery>(options =>
+                options.UseSqlServer(queryDBconnectionString,
                     //retry strategy does not support user initiated transactions 
                     sqlServerOptionsAction: sqlOptions =>
                     {
@@ -206,15 +291,24 @@ public static class IServiceCollectionExtensions
             //SQL ALWAYS ENCRYPTED, the connection string must include "Column Encryption Setting=Enabled"
             if (!_keyStoreProviderRegistered)
             {
-                //sql always encrypted support; connection string must include "Column Encryption Setting=Enabled"
                 var credential = new DefaultAzureCredential();
                 SqlColumnEncryptionAzureKeyVaultProvider sqlColumnEncryptionAzureKeyVaultProvider = new(credential);
-                SqlConnection.RegisterColumnEncryptionKeyStoreProviders(customProviders: new Dictionary<string, SqlColumnEncryptionKeyStoreProvider>(capacity: 1, comparer: StringComparer.OrdinalIgnoreCase)
-                 {
-                     {
-                         SqlColumnEncryptionAzureKeyVaultProvider.ProviderName, sqlColumnEncryptionAzureKeyVaultProvider
-                     }
-                 });
+
+                try
+                {
+                    SqlConnection.RegisterColumnEncryptionKeyStoreProviders(customProviders: new Dictionary<string, SqlColumnEncryptionKeyStoreProvider>(capacity: 1, comparer: StringComparer.OrdinalIgnoreCase)
+                    {
+                        {
+                            SqlColumnEncryptionAzureKeyVaultProvider.ProviderName, sqlColumnEncryptionAzureKeyVaultProvider
+                        }
+                    });
+                }
+                catch
+                {
+                    //ignore; already registered.  T
+                    //this is a workaround for the fact that the SqlColumnEncryptionAzureKeyVaultProvider is already registered in the web application factory registrations
+                    //SqlConnection does not currently have a Try register method or any way to check if a provider is already registered
+                }
                 _keyStoreProviderRegistered = true;
             }
 
@@ -222,7 +316,7 @@ public static class IServiceCollectionExtensions
             //services.AddKeyedScoped<List<AuditEntry>>("Audit", (_, _) => []);
         }
 
-        IConfigurationSection configSection;
+        //IConfigurationSection configSection;
 
         //Azure Service Clients - Blob, EventGridPublisher, KeyVault, etc; enables injecting IAzureClientFactory<>
         //https://learn.microsoft.com/en-us/dotnet/azure/sdk/dependency-injection
@@ -236,13 +330,31 @@ public static class IServiceCollectionExtensions
                 // Use DefaultAzureCredential by default
                 builder.UseCredential(new DefaultAzureCredential());
 
-                configSection = config.GetSection("EventGridPublisher1");
-                if (configSection.Exists())
+                var egpConfigSection = config.GetSection("EventGridPublisher1");
+                if (egpConfigSection.Exists())
                 {
                     //Ideally use TopicEndpoint Uri (w/DefaultAzureCredential)
-                    builder.AddEventGridPublisherClient(new Uri(configSection.GetValue<string>("TopicEndpoint")!),
-                        new AzureKeyCredential(configSection.GetValue<string>("Key")!))
+                    builder.AddEventGridPublisherClient(new Uri(egpConfigSection.GetValue<string>("TopicEndpoint")!),
+                        new AzureKeyCredential(egpConfigSection.GetValue<string>("Key")!))
                     .WithName("EventGridPublisher1");
+                }
+
+                //Azure OpenAI
+                var jobChatConfigSection = config.GetSection(JobChatSettings.ConfigSectionName);
+                if (jobChatConfigSection.Exists())
+                {
+                    // Register a custom client factory since this client does not currently have a service registration method
+                    builder.AddClient<AzureOpenAIClient, AzureOpenAIClientOptions>((options, _, _) =>
+                    {
+                        var key = jobChatConfigSection.GetValue<string?>("Key", null);
+                        return !string.IsNullOrEmpty(key)
+                            ? new AzureOpenAIClient(new Uri(jobChatConfigSection.GetValue<string>("Url")!), new AzureKeyCredential(key), options)
+                            : new AzureOpenAIClient(new Uri(jobChatConfigSection.GetValue<string>("Url")!), new DefaultAzureCredential(), options);
+                    });
+
+                    //AzureOpenAI chat service wrapper (not an Azure Client but a wrapper that uses it)
+                    services.AddTransient<IJobChatService, JobChatService>();
+                    services.Configure<JobChatSettings>(jobChatConfigSection);
                 }
             });
 
@@ -256,10 +368,10 @@ public static class IServiceCollectionExtensions
         }
 
         //external SampleAppApi
-        configSection = config.GetSection(SampleApiRestClientSettings.ConfigSectionName);
-        if (configSection.Exists())
+        var sampleApiconfigSection = config.GetSection(SampleApiRestClientSettings.ConfigSectionName);
+        if (sampleApiconfigSection.Exists())
         {
-            services.Configure<SampleApiRestClientSettings>(configSection);
+            services.Configure<SampleApiRestClientSettings>(sampleApiconfigSection);
 
             services.AddScoped(provider =>
             {
@@ -362,10 +474,10 @@ public static class IServiceCollectionExtensions
         //}
 
         //external weather service
-        configSection = config.GetSection(WeatherServiceSettings.ConfigSectionName);
-        if (configSection.Exists())
+        var weatherServiceConfigSection = config.GetSection(WeatherServiceSettings.ConfigSectionName);
+        if (weatherServiceConfigSection.Exists())
         {
-            services.Configure<WeatherServiceSettings>(configSection);
+            services.Configure<WeatherServiceSettings>(weatherServiceConfigSection);
             services.AddScoped<IWeatherService, WeatherService>();
 
             services.AddHttpClient<IWeatherService, WeatherService>(client =>
@@ -380,6 +492,24 @@ public static class IServiceCollectionExtensions
             //Microsoft.Extensions.Http.Resilience - https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience?tabs=dotnet-cli
             .AddStandardResilienceHandler();
         }
+
+        #region Jobs
+
+        //jobs api service
+        var jobsApiConfigSection = config.GetSection(JobsApiServiceSettings.ConfigSectionName);
+        if (jobsApiConfigSection.Exists())
+        {
+            services.Configure<JobsApiServiceSettings>(jobsApiConfigSection);
+            services.AddScoped<IJobsApiService, JobsApiService>();
+            services.AddHttpClient<IJobsApiService, JobsApiService>(client =>
+            {
+                client.BaseAddress = new Uri(jobsApiConfigSection.GetValue<string>("BaseUrl")!);
+            })
+            //Microsoft.Extensions.Http.Resilience - https://learn.microsoft.com/en-us/dotnet/core/resilience/http-resilience?tabs=dotnet-cli
+            .AddStandardResilienceHandler();
+        }
+
+        #endregion
 
         //StartupTasks - executes once at startup
         services.AddTransient<IStartupTask, LoadCache>();
