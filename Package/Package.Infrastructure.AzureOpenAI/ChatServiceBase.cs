@@ -18,9 +18,6 @@ namespace Package.Infrastructure.AzureOpenAI;
  * AzureOpenAI - when you access the model via the API, you need to refer to the deployment name rather than the underlying model name in API calls, 
  * which is one of the key differences between OpenAI and Azure OpenAI. OpenAI only requires the model name. 
  * Azure OpenAI always requires deployment name, even when using the model parameter. 
- * In our docs, we often have examples where deployment names are represented as identical to model names 
- * to help indicate which model works with a particular API endpoint. Ultimately your deployment names can 
- * follow whatever naming convention is best for your use case.
 */
 
 public abstract class ChatServiceBase(ILogger<ChatServiceBase> logger, IOptions<ChatServiceSettingsBase> settings,
@@ -85,33 +82,29 @@ public abstract class ChatServiceBase(ILogger<ChatServiceBase> logger, IOptions<
             chat.AddMessage(message);
         }
 
-        //var json = chat.Messages[0].SerializeToJson(optSer)!;
-        //var msg = json.DeserializeJson<ChatMessage>(optSer);
-
         var chatToolRounds = 0;
         do
         {
             //sometimes the model gets stuck repeatedly calling tools; limit the number of rounds
             if (chatToolRounds++ > maxToolCallRounds)
             {
-                throw new InvalidOperationException("Exceeded maximum number of tool call rounds.");
+                throw new InvalidOperationException("Exceeded maximum number of contiguous tool call rounds.");
             }
             requiresAction = false;
 
-            List<ChatMessage> msgs;
-            if (maxCompletionMessageCount != null && maxCompletionMessageCount > 0 && maxCompletionMessageCount < chat.Messages.Count)
-            {
-                msgs = [chat.Messages[0]]; //keep the initial instructions
-                msgs.AddRange(chat.Messages.Skip(chat.Messages.Count - maxCompletionMessageCount.Value));
-            }
-            else
-            {
-                msgs = chat.Messages;
-            }
+            List<ChatMessage> msgs = chat.Messages;
 
-            //remove null messages - requires further research
-            //chat.Messages.RemoveAll(m => m == null);
+            //determine some logic to limit the number of messages sent to the model
+            //if (maxCompletionMessageCount != null && maxCompletionMessageCount > 0 && maxCompletionMessageCount < chat.Messages.Count)
+            //{
+            //    msgs = GetRecentChatMessages(chat.Messages, maxCompletionMessageCount.Value);
+            //}
+            //else
+            //{
+            //    msgs = chat.Messages;
+            //}
 
+            //seems to get a 401 when hitting a token limit (gpt-4o-mini)
             ChatCompletion completion = await chatClient.CompleteChatAsync(msgs, options, cancellationToken);
 
             switch (completion.FinishReason)
@@ -158,6 +151,38 @@ public abstract class ChatServiceBase(ILogger<ChatServiceBase> logger, IOptions<
 
         return (chat.Id, chat.Messages[^1].Content[0].Text);
     }
+
+    /// <summary>
+    /// GetRecentChatMessages - Get the most recent chat messages to conserve tokens
+    /// Defend against invalid messages list going in to the model, like cutting off a tool-call message prior to a tool message
+    /// </summary>
+    /// <param name="msgs"></param>
+    /// <param name="maxMsgCount"></param>
+    /// <returns></returns>
+    //private static List<ChatMessage> GetRecentChatMessages(List<ChatMessage> msgs, int maxMsgCount)
+    //{
+    //    if (msgs.Count <= maxMsgCount)
+    //    {
+    //        return msgs;
+    //    }
+
+    //    var msgsRecent = new List<ChatMessage>(); 
+    //    msgsRecent.AddRange(msgs);
+
+    //    //remove at index 1 until the count is less than the max
+    //    for(int i = msgs.Count - 1; i > maxMsgCount; i--)
+    //    {
+    //        msgsRecent.RemoveAt(1);
+    //    }
+
+    //    //remove messages from index 1 if they are referring to tools
+    //    while(msgsRecent.Count > 1 && (msgsRecent[1] is ToolChatMessage || (msgsRecent[1] is AssistantChatMessage assistantMessage && assistantMessage.ToolCalls != null)))
+    //    {
+    //        msgsRecent.RemoveAt(1);
+    //    }
+
+    //    return msgsRecent;
+    //}
 
     public async Task<string> ChatCompletionWithDataSource(Request request)
     {
