@@ -6,7 +6,7 @@ name: Build and deploy ASP.Net Core app to Azure Web App - ef-api-dev-2
 on:
   push:
     branches:
-      - net8-aya
+      - aya-mods
   workflow_dispatch:
 
 jobs:
