@@ -1,5 +1,6 @@
 ﻿using Azure.AI.OpenAI;
 using Azure.AI.OpenAI.Chat;
+using Microsoft.Extensions.Azure;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
@@ -8,9 +9,11 @@ using System.Text;
 using System.Text.Json;
 using ZiggyCreatures.Caching.Fusion;
 
-namespace Package.Infrastructure.AzureOpenAI;
+namespace Package.Infrastructure.AzureOpenAI.Chat;
 
-//https://github.com/openai/openai-dotnet?tab=readme-ov-file
+//https://github.com/openai/openai-dotnet
+//https://github.com/Azure/azure-sdk-for-net/blob/main/sdk/openai/Azure.AI.OpenAI/README.md
+
 //https://platform.openai.com/settings/organization/usage
 //https://platform.openai.com/docs/models
 
@@ -21,9 +24,9 @@ namespace Package.Infrastructure.AzureOpenAI;
 */
 
 public abstract class ChatServiceBase(ILogger<ChatServiceBase> logger, IOptions<ChatServiceSettingsBase> settings,
-    AzureOpenAIClient openAIclient, IFusionCacheProvider cacheProvider) : IChatService
+    IAzureClientFactory<AzureOpenAIClient> clientFactory, IFusionCacheProvider cacheProvider) : IChatService
 {
-    private readonly ChatClient chatClient = openAIclient.GetChatClient(settings.Value.DeploymentName);
+    private readonly ChatClient chatClient = clientFactory.CreateClient(settings.Value.ResourceName).GetChatClient(settings.Value.DeploymentName);
     private readonly IFusionCache cache = cacheProvider.GetCache(settings.Value.CacheName);
 
     private static readonly JsonSerializerOptions optSer = new()
@@ -60,7 +63,7 @@ public abstract class ChatServiceBase(ILogger<ChatServiceBase> logger, IOptions<
         {
             logger.LogInformation("ChatCompletionAsync - cache.GetOrDefaultAsync({CacheKey})", cacheKey);
             //may have expired, in that case restart with a new chat
-            var chatjson = (await cache.GetOrDefaultAsync<string>(cacheKey, token: cancellationToken));
+            var chatjson = await cache.GetOrDefaultAsync<string>(cacheKey, token: cancellationToken);
             if (chatjson != null)
             {
                 chat = chatjson.DeserializeJson<Chat>(optSer)!;
