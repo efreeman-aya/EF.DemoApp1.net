@@ -1,11 +1,12 @@
 ﻿using Infrastructure.JobsApi;
 using LanguageExt.Common;
 using OpenAI.Chat;
+using Package.Infrastructure.Common.Extensions;
 using System.Text.Json;
 
 namespace Application.Services.JobChat;
 
-public class JobChatOrchestrator(ILogger<JobChatOrchestrator> logger, IOptions<JobChatOrchestratorSettings> settings, IJobChatService chatService, IJobsApiService jobsService)
+public class JobChatOrchestrator(ILogger<JobChatOrchestrator> logger, IOptions<JobChatOrchestratorSettings> settings, IJobChatService chatService2, IJobsApiService jobsService)
     : ServiceBase(logger), IJobChatOrchestrator
 {
 
@@ -27,7 +28,7 @@ public class JobChatOrchestrator(ILogger<JobChatOrchestrator> logger, IOptions<J
 
         try
         {
-            var response = await chatService.ChatCompletionAsync(request.ChatId, messages, options, ToolsCallback, settings.Value.MaxCompletionMessageCount, cancellationToken: cancellationToken);
+            var response = await chatService2.ChatCompletionAsync(request.ChatId, messages, options, ToolsCallback, settings.Value.MaxCompletionMessageCount, cancellationToken: cancellationToken);
             return new ChatResponse(response.Item1, response.Item2);
         }
         catch (Exception ex)
@@ -100,9 +101,9 @@ Sample search results table:
         return matches;
     }
 
-    private async Task<IEnumerable<Job>> SearchJobsAsync(List<int> expertiseCodes, decimal latitude, decimal longitude, int radiusMiles)
+    private async Task<JobSearchResponse> SearchJobsAsync(List<int> expertiseCodes, decimal latitude, decimal longitude, int radiusMiles)
     {
-        return await jobsService.SearchJobsAsync(expertiseCodes, latitude, longitude, radiusMiles);
+        return await jobsService.SearchJobsAsync(new JobSearchRequest(expertiseCodes, latitude, longitude, radiusMiles));
     }
 
     /// <summary>
@@ -196,7 +197,8 @@ Sample search results table:
                         _ = argumentsJson.RootElement.TryGetProperty("radius", out JsonElement elRadius);
                         var paramRadius = elRadius.GetInt32()!;
                         var toolResult = await SearchJobsAsync(paramExpertises, paramLatitude, paramLongitude, paramRadius);
-                        var toolResultMessage = string.Join(", ", toolResult);
+                        //var toolResultMessage = string.Join(", ", toolResult);
+                        var toolResultMessage = toolResult.Jobs.SerializeToJson();
                         messages.Add(new ToolChatMessage(toolCall.Id, toolResultMessage));
                         break;
                     }

@@ -1,9 +1,9 @@
-﻿using Azure.AI.OpenAI.Assistants;
-using Package.Infrastructure.AzureOpenAI.Assistant;
+﻿using Azure.AI.OpenAI;
+using Package.Infrastructure.AzureOpenAI.Assistants;
 
 namespace Application.Services.JobAssistant;
 
-public class JobAssistantService(ILogger<JobAssistantService> logger, IOptions<JobAssistantSettings> settings, AssistantsClient client)
-    : AssistantServiceBase(logger, settings, client), IJobAssistantService
+public class JobAssistantService(ILogger<JobAssistantService> logger, IOptions<JobAssistantServiceSettings> settings, AzureOpenAIClient aoaiClient)
+    : AssistantServiceBase(logger, settings, aoaiClient), IJobAssistantService
 {
 }

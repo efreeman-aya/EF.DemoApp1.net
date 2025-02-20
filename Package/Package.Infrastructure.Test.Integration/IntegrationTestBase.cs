@@ -1,8 +1,8 @@
 ﻿using Application.Contracts.Interfaces;
 using Azure;
 using Azure.AI.OpenAI;
-using Azure.AI.OpenAI.Assistants;
 using Azure.Identity;
+using Azure.Security.KeyVault.Keys;
 using Infrastructure.RapidApi.WeatherApi;
 using Microsoft.Azure.Cosmos.Fluent;
 using Microsoft.Extensions.Azure;
@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging;
 using Package.Infrastructure.BackgroundServices;
 using Package.Infrastructure.Cache;
 using Package.Infrastructure.Common.Contracts;
+using Package.Infrastructure.KeyVault;
 using Package.Infrastructure.Test.Integration.AzureOpenAI.Assistant;
 using Package.Infrastructure.Test.Integration.AzureOpenAI.Chat;
 using Package.Infrastructure.Test.Integration.Blob;
@@ -99,11 +100,19 @@ public abstract class IntegrationTestBase
             var kvConfigSection = Config.GetSection(KeyVaultManager1Settings.ConfigSectionName);
             if (kvConfigSection.GetChildren().Any())
             {
-                var akvUrl = kvConfigSection.GetValue<string>("VaultUrl")!; 
+                var akvUrl = kvConfigSection.GetValue<string>("VaultUrl")!;
                 var name = kvConfigSection.GetValue<string>("KeyVaultClientName")!;
                 builder.AddSecretClient(new Uri(akvUrl)).WithName(name);
                 builder.AddKeyClient(new Uri(akvUrl)).WithName(name);
                 builder.AddCertificateClient(new Uri(akvUrl)).WithName(name);
+
+                //Crypto Utility; keyed enables registering several if needed
+                services.AddKeyedSingleton<IKeyVaultCryptoUtility>("SomeCryptoUtil", (sp, _) =>
+                {
+                    var keyClient = sp.GetRequiredService<IAzureClientFactory<KeyClient>>().CreateClient(name);
+                    var cryptoClient = keyClient.GetCryptographyClient(kvConfigSection.GetValue<string>("CryptoKey")!);
+                    return new KeyVaultCryptoUtility(cryptoClient);
+                });
 
                 //wrapper for key vault sdks
                 services.Configure<KeyVaultManager1Settings>(kvConfigSection);
@@ -114,27 +123,20 @@ public abstract class IntegrationTestBase
             var azureOpenIAConfigSection = Config.GetSection("AzureOpenAI");
             if (azureOpenIAConfigSection.GetChildren().Any())
             {
+                AzureOpenAIClient azureOpenAIClient = null!;
+
                 // Register a custom client factory since this client does not currently have a service registration method
                 builder.AddClient<AzureOpenAIClient, AzureOpenAIClientOptions>((options, _, _) =>
                 {
                     var key = azureOpenIAConfigSection.GetValue<string?>("Key", null);
                     if (!string.IsNullOrEmpty(key))
                     {
-                        return new AzureOpenAIClient(new Uri(azureOpenIAConfigSection.GetValue<string>("Url")!), new AzureKeyCredential(key), options);
+                        azureOpenAIClient = new AzureOpenAIClient(new Uri(azureOpenIAConfigSection.GetValue<string>("Url")!), new AzureKeyCredential(key), options);
                     }
                     //this throws internally when running local (no network for managed identity check) but subsequent checks succeed; could avoid with defaultAzCredOptions.ExcludeManagedIdentityCredential = true;
-                    return new AzureOpenAIClient(new Uri(azureOpenIAConfigSection.GetValue<string>("Url")!), new DefaultAzureCredential(), options);
-                }).WithName("AzureOpenAI");
+                    azureOpenAIClient = new AzureOpenAIClient(new Uri(azureOpenIAConfigSection.GetValue<string>("Url")!), new DefaultAzureCredential(), options);
 
-                //Experimental AssistantsClient (client factory does not currently support this client)
-                services.AddScoped<AssistantsClient>(provider =>
-                {
-                    var key = azureOpenIAConfigSection.GetValue<string?>("Key", null);
-                    if (!string.IsNullOrEmpty(key))
-                    {
-                        return new AssistantsClient(new Uri(azureOpenIAConfigSection.GetValue<string>("Url")!), new AzureKeyCredential(key));
-                    }
-                    return new AssistantsClient(new Uri(azureOpenIAConfigSection.GetValue<string>("Url")!), new DefaultAzureCredential());
+                    return azureOpenAIClient;
                 });
             }
         });
@@ -245,46 +247,61 @@ public abstract class IntegrationTestBase
             {
                 RedisConfiguration redisConfigFusion = new();
                 Config.GetSection(cacheInstance.RedisConfigurationSection).Bind(redisConfigFusion);
-                var redisConfigurationOptions = new ConfigurationOptions
+                if (redisConfigFusion.EndpointUrl != null)
                 {
-                    EndPoints =
+                    var redisConfigurationOptions = new ConfigurationOptions
                     {
+                        EndPoints =
                         {
-                            redisConfigFusion.EndpointUrl,
-                            redisConfigFusion.Port
-                        }
-                    },
-                    Ssl = true,
-                    AbortOnConnectFail = false
-                };
-                if (cacheInstance.BackplaneChannelName != null)
-                {
-                    redisConfigurationOptions.ChannelPrefix = new RedisChannel(cacheInstance.BackplaneChannelName, RedisChannel.PatternMode.Auto);
-                }
-
-                if (!string.IsNullOrEmpty(redisConfigFusion.Password))
-                {
-                    redisConfigurationOptions.Password = redisConfigFusion.Password;
-                }
-                else
-                {
-                    //configure redis with managed identity
-                    _ = Task.Run(() => redisConfigurationOptions.ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential())).Result;
-                }
-
-                //var connectionString = config.GetConnectionString(cacheInstance.RedisName);
-                fcBuilder
-                    .WithDistributedCache(new RedisCache(new RedisCacheOptions()
+                            {
+                                redisConfigFusion.EndpointUrl,
+                                redisConfigFusion.Port
+                            }
+                        },
+                        Ssl = true,
+                        AbortOnConnectFail = false
+                    };
+                    if (cacheInstance.BackplaneChannelName != null)
                     {
-                        //Configuration = connectionString,  
-                        ConfigurationOptions = redisConfigurationOptions
-                    }))
+                        redisConfigurationOptions.ChannelPrefix = new RedisChannel(cacheInstance.BackplaneChannelName, RedisChannel.PatternMode.Auto);
+                    }
 
-                    .WithBackplane(new RedisBackplane(new RedisBackplaneOptions
+                    if (!string.IsNullOrEmpty(redisConfigFusion.Password))
                     {
-                        //Configuration = connectionString,
-                        ConfigurationOptions = redisConfigurationOptions
-                    }));
+                        redisConfigurationOptions.Password = redisConfigFusion.Password;
+                    }
+                    else
+                    {
+                        var options = new DefaultAzureCredentialOptions();
+                        //if (localEnviroment)
+                        //{
+                        //    //running local causes errors ManagedIdentityCredential.GetToken was unable to retrieve an access token. Scopes: [ https://cognitiveservices.azure.com/.default ]
+                        //    //Azure.RequestFailedException: A socket operation was attempted to an unreachable network. (169.254.169.254:80)\r\n ---> System.Net.Http.HttpRequestException: A socket operation was attempted to an unreachable network. (169.254.169.254:80)
+                        //    options.ExcludeManagedIdentityCredential = true;
+                        //}
+                        //configure redis with managed identity
+                        _ = Task.Run(() => redisConfigurationOptions.ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential(options))).Result;
+                    }
+
+                    //var redisFCConnectionString = config.GetConnectionString(cacheInstance.RedisConfigurationSection);
+                    //var redisConfigurationOptions = ConfigurationOptions.Parse(redisFCConnectionString!);
+                    //    .ConfigureForAzureWithTokenCredentialAsync(new DefaultAzureCredential()); //configure redis with managed identity
+
+
+                    //var connectionString = config.GetConnectionString(cacheInstance.RedisName);
+                    fcBuilder
+                        .WithDistributedCache(new RedisCache(new RedisCacheOptions()
+                        {
+                            //Configuration = connectionString,  
+                            ConfigurationOptions = redisConfigurationOptions
+                        }))
+
+                        .WithBackplane(new RedisBackplane(new RedisBackplaneOptions
+                        {
+                            //Configuration = connectionString,
+                            ConfigurationOptions = redisConfigurationOptions
+                        }));
+                }
             }
 
         }
